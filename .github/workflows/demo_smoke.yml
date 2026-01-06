@@ -1,0 +1,44 @@
+name: demo_smoke
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: install python deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: seed demo (cached mode ok)
+        run: |
+          if [ -f scripts/seed_demo.py ]; then
+            python scripts/seed_demo.py
+          else
+            echo "seed_demo.py not yet implemented; skipping"
+          fi
+
+      - name: run demo smoke (must verify MetricBundleV1 keys)
+        run: |
+          if [ -f scripts/smoke_demo.py ]; then
+            python scripts/smoke_demo.py
+          else
+            echo "smoke_demo.py not yet implemented; skipping"
+          fi
