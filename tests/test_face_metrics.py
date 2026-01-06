@@ -1,4 +1,4 @@
-"""Tests for face metrics (mediapipe).
+"""Tests for face metrics - pure computation functions.
 
 Face metrics from METRICS.md:
 - face_present_ratio: % frames with detected face
@@ -7,6 +7,9 @@ Face metrics from METRICS.md:
 - mouth_open_energy: mouth movement variance
 - mouth_audio_corr: mouth-audio correlation
 - blink_count, blink_rate_hz: optional blink detection
+
+Note: Face detection is done by adapter/vision/mediapipe_face.
+These tests focus on the pure computation functions in face_metrics.
 """
 
 import subprocess
@@ -23,7 +26,6 @@ from mirage.metrics.face_metrics import (
     compute_landmark_jitter,
     compute_mouth_audio_corr,
     compute_mouth_open_energy,
-    extract_face_data,
 )
 
 
@@ -97,7 +99,7 @@ def create_test_audio(path: Path, duration: float = 1.0) -> None:
 
 
 class TestExtractFaceData:
-    """Tests for face data extraction."""
+    """Tests for face data extraction via adapter."""
 
     @pytest.mark.skipif(
         not (opencv_available() and mediapipe_available()),
@@ -107,22 +109,25 @@ class TestExtractFaceData:
         """Should return list of face data dicts per frame."""
         import numpy as np
 
+        from mirage.adapter.vision.mediapipe_face import FaceExtractor
+
         # Create simple test frames (no real face, but tests structure)
-        frames = [np.zeros((240, 320, 3), dtype=np.uint8) for _ in range(5)]
+        extractor = FaceExtractor()
+        bgr_arrays = [np.zeros((240, 320, 3), dtype=np.uint8) for _ in range(5)]
+        track = extractor.extract_from_bgr_arrays(bgr_arrays)
 
-        face_data = extract_face_data(frames)
+        assert len(track.face_data) == len(bgr_arrays)
+        # Each entry should have detected attribute
+        for entry in track.face_data:
+            assert hasattr(entry, "detected")
 
-        assert isinstance(face_data, list)
-        assert len(face_data) == len(frames)
-        # Each entry should be dict or None
-        for entry in face_data:
-            assert entry is None or isinstance(entry, dict)
-
-    @pytest.mark.skipif(not opencv_available(), reason="opencv not available")
     def test_empty_frames_returns_empty(self):
-        """Empty frame list should return empty list."""
-        face_data = extract_face_data([])
-        assert face_data == []
+        """Empty frame list should return empty track."""
+        from mirage.adapter.vision.mediapipe_face import FaceExtractor
+
+        extractor = FaceExtractor()
+        track = extractor.extract_from_bgr_arrays([])
+        assert track.frame_count == 0
 
 
 class TestComputeFacePresentRatio:
@@ -313,7 +318,7 @@ class TestComputeBlinkMetrics:
 
 
 class TestComputeTier1Metrics:
-    """Integration tests for full Tier 1 metrics."""
+    """Tests for full Tier 1 metrics computation."""
 
     @pytest.mark.skipif(
         not (opencv_available() and mediapipe_available()),
@@ -323,11 +328,34 @@ class TestComputeTier1Metrics:
         """Should return dict with all Tier 1 fields."""
         import numpy as np
 
-        # Create simple test frames
-        frames = [np.zeros((240, 320, 3), dtype=np.uint8) for _ in range(5)]
-        audio_envelope = np.array([0.1, 0.2, 0.3, 0.2, 0.1])
+        from mirage.adapter.vision.mediapipe_face import FaceExtractor
+        from mirage.metrics.face_metrics import (
+            _compute_eye_aspect_ratio,
+            _compute_mouth_openness,
+        )
 
-        metrics = compute_face_metrics(frames, audio_envelope, fps=30.0)
+        # Create simple test frames and extract face data via adapter
+        bgr_arrays = [np.zeros((240, 320, 3), dtype=np.uint8) for _ in range(5)]
+        extractor = FaceExtractor()
+        track = extractor.extract_from_bgr_arrays(bgr_arrays, fps=30.0)
+
+        # Convert to dict format expected by metrics
+        face_data = []
+        for fd in track.face_data:
+            if fd.detected and len(fd.landmarks) > 0:
+                face_data.append({
+                    "bbox": fd.bbox,
+                    "landmarks": fd.landmarks,
+                    "mouth_openness": _compute_mouth_openness(fd.landmarks),
+                    "eye_aspect_ratio": _compute_eye_aspect_ratio(fd.landmarks),
+                })
+            else:
+                face_data.append(None)
+
+        audio_envelope = [0.1, 0.2, 0.3, 0.2, 0.1]
+        frame_size = (320, 240)
+
+        metrics = compute_face_metrics(face_data, frame_size, audio_envelope, fps=30.0)
 
         # Check all Tier 1 fields
         assert "face_present_ratio" in metrics
@@ -344,10 +372,8 @@ class TestComputeTier1Metrics:
         assert 0.0 <= metrics["face_present_ratio"] <= 1.0
 
     def test_empty_frames_returns_defaults(self):
-        """Empty frames should return default values."""
-        import numpy as np
-
-        metrics = compute_face_metrics([], np.array([]), fps=30.0)
+        """Empty face data should return default values."""
+        metrics = compute_face_metrics([], (320, 240), [], fps=30.0)
 
         assert metrics["face_present_ratio"] == 0.0
         assert metrics["face_bbox_jitter"] == 0.0
@@ -363,7 +389,14 @@ class TestIntegrationWithVideo:
     )
     def test_process_test_video(self):
         """Should process a test video without errors."""
-        from mirage.metrics.video_quality import decode_video
+        import numpy as np
+
+        from mirage.adapter.media.video_decode import VideoReader
+        from mirage.adapter.vision.mediapipe_face import FaceExtractor
+        from mirage.metrics.face_metrics import (
+            _compute_eye_aspect_ratio,
+            _compute_mouth_openness,
+        )
 
         with (
             tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as vf,
@@ -376,17 +409,35 @@ class TestIntegrationWithVideo:
             create_test_video(video_path, duration=0.5, fps=10)
             create_test_audio(audio_path, duration=0.5)
 
-            # Decode frames
-            frames = decode_video(video_path)
+            # Decode frames via adapter
+            with VideoReader(video_path) as reader:
+                frames = list(reader.iter_frames())
+                frame_size = (reader.width, reader.height)
+
             assert len(frames) > 0
 
+            # Extract face data via adapter
+            extractor = FaceExtractor()
+            track = extractor.extract_from_frames(frames, fps=10.0)
+
+            # Convert to dict format
+            face_data = []
+            for fd in track.face_data:
+                if fd.detected and len(fd.landmarks) > 0:
+                    face_data.append({
+                        "bbox": fd.bbox,
+                        "landmarks": fd.landmarks,
+                        "mouth_openness": _compute_mouth_openness(fd.landmarks),
+                        "eye_aspect_ratio": _compute_eye_aspect_ratio(fd.landmarks),
+                    })
+                else:
+                    face_data.append(None)
+
             # Create fake audio envelope
-            import numpy as np
+            audio_envelope = list(np.random.rand(len(frames)))
 
-            audio_envelope = np.random.rand(len(frames))
-
-            # Compute metrics
-            metrics = compute_face_metrics(frames, audio_envelope, fps=10.0)
+            # Compute metrics (pure computation)
+            metrics = compute_face_metrics(face_data, frame_size, audio_envelope, fps=10.0)
 
             assert "face_present_ratio" in metrics
             assert "mouth_audio_corr" in metrics

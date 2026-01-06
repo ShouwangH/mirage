@@ -8,17 +8,15 @@ Metrics from METRICS.md:
 - mouth_audio_corr: correlation between mouth and audio envelope
 - blink_count, blink_rate_hz: blink detection via eye aspect ratio
 
-Note: Face detection uses adapter/vision/mediapipe_face. This module contains
-only pure computations on the detected landmarks/bboxes.
+This module contains ONLY pure computations on domain data.
+Face detection is handled by adapter/vision/ and called from bundle.py.
 """
 
 from __future__ import annotations
 
 import math
 
-from mirage.adapter.vision import FaceExtractor
-
-# Mediapipe face mesh landmark indices
+# Landmark indices for derived computations
 # Upper lip: 13, Lower lip: 14 (simplified)
 UPPER_LIP_IDX = 13
 LOWER_LIP_IDX = 14
@@ -32,57 +30,6 @@ RIGHT_EYE_CENTER = 263
 # Thresholds
 EAR_THRESHOLD = 0.2  # Below this = blink
 BLINK_CONSEC_FRAMES = 2  # Minimum frames for a blink
-
-# Module-level extractor for reuse (avoids reinit overhead)
-_extractor: FaceExtractor | None = None
-
-
-def _get_extractor() -> FaceExtractor:
-    """Get or create the shared FaceExtractor instance."""
-    global _extractor
-    if _extractor is None:
-        _extractor = FaceExtractor()
-    return _extractor
-
-
-def extract_face_data(frames: list, fps: float = 30.0) -> list:
-    """Extract face detection data from frames via adapter.
-
-    Args:
-        frames: List of numpy array frames (BGR).
-        fps: Video frame rate.
-
-    Returns:
-        List of face data dicts (or None if no face detected).
-        Each dict contains: bbox, landmarks, mouth_openness, eye_aspect_ratio.
-    """
-    if len(frames) == 0:
-        return []
-
-    # Use adapter for face detection
-    extractor = _get_extractor()
-    track = extractor.extract_from_bgr_arrays(frames, fps=fps)
-
-    # Convert FaceTrack to legacy dict format with derived values
-    results = []
-    for fd in track.face_data:
-        if fd.detected and len(fd.landmarks) > 0:
-            # Compute derived metrics from landmarks
-            mouth_openness = _compute_mouth_openness(fd.landmarks)
-            ear = _compute_eye_aspect_ratio(fd.landmarks)
-
-            results.append(
-                {
-                    "bbox": fd.bbox,
-                    "landmarks": fd.landmarks,
-                    "mouth_openness": mouth_openness,
-                    "eye_aspect_ratio": ear,
-                }
-            )
-        else:
-            results.append(None)
-
-    return results
 
 
 def _compute_mouth_openness(landmarks: list) -> float:
@@ -386,33 +333,27 @@ def compute_blink_metrics(face_data: list, fps: float) -> tuple[int, float]:
 
 
 def compute_face_metrics(
-    frames: list,
-    audio_envelope: object,
+    face_data: list,
+    frame_size: tuple[int, int],
+    audio_envelope: list,
     fps: float,
 ) -> dict:
-    """Compute all face metrics.
+    """Compute all face metrics from extracted face data.
+
+    This is a pure computation function - face detection is done by the caller
+    using adapter/vision/mediapipe_face.
 
     Args:
-        frames: List of numpy array frames (BGR).
+        face_data: List of face data dicts from adapter (or None if no face).
+            Each dict contains: bbox, landmarks, mouth_openness, eye_aspect_ratio.
+        frame_size: (width, height) of video frames for normalization.
         audio_envelope: Audio RMS envelope per frame.
         fps: Frames per second.
 
     Returns:
-        Dict with all Tier 1 metric fields.
+        Dict with all face metric fields.
     """
-    # Extract face data
-    face_data = extract_face_data(frames)
-
-    # Compute metrics
     face_present_ratio = compute_face_present_ratio(face_data)
-
-    # Get frame size for bbox jitter normalization
-    if len(frames) > 0:
-        h, w = frames[0].shape[:2]
-        frame_size = (w, h)
-    else:
-        frame_size = (320, 240)
-
     face_bbox_jitter = compute_face_bbox_jitter(face_data, frame_size)
     landmark_jitter = compute_landmark_jitter(face_data)
     mouth_open_energy = compute_mouth_open_energy(face_data)
