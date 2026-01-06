@@ -1,4 +1,4 @@
-"""Tier 1 metrics using mediapipe.
+"""Face metrics using mediapipe.
 
 Metrics from METRICS.md:
 - face_present_ratio: % frames with detected face
@@ -400,12 +400,12 @@ def compute_blink_metrics(face_data: list, fps: float) -> tuple[int, float]:
     return blink_count, blink_rate
 
 
-def compute_tier1_metrics(
+def compute_face_metrics(
     frames: list,
     audio_envelope: object,
     fps: float,
 ) -> dict:
-    """Compute all Tier 1 metrics.
+    """Compute all face metrics.
 
     Args:
         frames: List of numpy array frames (BGR).

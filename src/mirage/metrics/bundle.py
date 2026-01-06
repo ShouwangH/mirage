@@ -1,21 +1,21 @@
-"""MetricBundleV1 assembly from tier0 + tier1 + status.
+"""MetricBundleV1 assembly from video_quality + face_metrics + status.
 
 This module provides the main compute_metrics entry point that:
-1. Computes Tier 0 metrics (ffmpeg/opencv/numpy)
-2. Computes Tier 1 metrics (mediapipe)
+1. Computes video quality metrics (ffmpeg/opencv/numpy)
+2. Computes face metrics (mediapipe)
 3. Derives status badge from metrics
 4. Returns a complete MetricBundleV1
 
-Per METRICS.md, Tier 2 (SyncNet) is optional and set to null until PR17.
+Per METRICS.md, SyncNet metrics are optional and set to null until PR17.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from mirage.metrics.face_metrics import compute_face_metrics
 from mirage.metrics.status import compute_status_badge
-from mirage.metrics.tier0 import compute_tier0_metrics, decode_video
-from mirage.metrics.tier1 import compute_tier1_metrics
+from mirage.metrics.video_quality import compute_video_quality_metrics, decode_video
 from mirage.models.types import MetricBundleV1
 
 
@@ -99,22 +99,22 @@ def compute_metrics(video_path: Path, audio_path: Path) -> MetricBundleV1:
     Returns:
         Complete MetricBundleV1 with all metrics and status.
     """
-    # Compute Tier 0 metrics
-    tier0 = compute_tier0_metrics(video_path, audio_path)
+    # Compute video quality metrics
+    video_quality = compute_video_quality_metrics(video_path, audio_path)
 
-    # Decode video for Tier 1 (if decode successful)
-    if tier0["decode_ok"]:
+    # Decode video for face metrics (if decode successful)
+    if video_quality["decode_ok"]:
         frames = decode_video(video_path)
-        fps = tier0["fps"]
+        fps = video_quality["fps"]
 
         # Extract audio envelope for mouth-audio correlation
         audio_envelope = _extract_audio_envelope(audio_path, len(frames), fps)
 
-        # Compute Tier 1 metrics
-        tier1 = compute_tier1_metrics(frames, audio_envelope, fps)
+        # Compute face metrics
+        face = compute_face_metrics(frames, audio_envelope, fps)
     else:
-        # Failed decode - use default Tier 1 values
-        tier1 = {
+        # Failed decode - use default face metrics
+        face = {
             "face_present_ratio": 0.0,
             "face_bbox_jitter": 0.0,
             "landmark_jitter": 0.0,
@@ -126,38 +126,38 @@ def compute_metrics(video_path: Path, audio_path: Path) -> MetricBundleV1:
 
     # Compute status badge
     status_result = compute_status_badge(
-        decode_ok=tier0["decode_ok"],
-        face_present_ratio=tier1["face_present_ratio"],
-        av_duration_delta_ms=tier0["av_duration_delta_ms"],
-        flicker_score=tier0["flicker_score"],
-        freeze_frame_ratio=tier0["freeze_frame_ratio"],
-        blur_score=tier0["blur_score"],
-        mouth_audio_corr=tier1["mouth_audio_corr"],
+        decode_ok=video_quality["decode_ok"],
+        face_present_ratio=face["face_present_ratio"],
+        av_duration_delta_ms=video_quality["av_duration_delta_ms"],
+        flicker_score=video_quality["flicker_score"],
+        freeze_frame_ratio=video_quality["freeze_frame_ratio"],
+        blur_score=video_quality["blur_score"],
+        mouth_audio_corr=face["mouth_audio_corr"],
     )
 
     # Assemble MetricBundleV1
     return MetricBundleV1(
-        # Tier 0
-        decode_ok=tier0["decode_ok"],
-        video_duration_ms=tier0["video_duration_ms"],
-        audio_duration_ms=tier0["audio_duration_ms"],
-        av_duration_delta_ms=tier0["av_duration_delta_ms"],
-        fps=tier0["fps"],
-        frame_count=tier0["frame_count"],
-        scene_cut_count=tier0["scene_cut_count"],
-        freeze_frame_ratio=tier0["freeze_frame_ratio"],
-        flicker_score=tier0["flicker_score"],
-        blur_score=tier0["blur_score"],
-        frame_diff_spike_count=tier0["frame_diff_spike_count"],
-        # Tier 1
-        face_present_ratio=tier1["face_present_ratio"],
-        face_bbox_jitter=tier1["face_bbox_jitter"],
-        landmark_jitter=tier1["landmark_jitter"],
-        mouth_open_energy=tier1["mouth_open_energy"],
-        mouth_audio_corr=tier1["mouth_audio_corr"],
-        blink_count=tier1["blink_count"],
-        blink_rate_hz=tier1["blink_rate_hz"],
-        # Tier 2 (optional, null until SyncNet PR17)
+        # Video quality metrics
+        decode_ok=video_quality["decode_ok"],
+        video_duration_ms=video_quality["video_duration_ms"],
+        audio_duration_ms=video_quality["audio_duration_ms"],
+        av_duration_delta_ms=video_quality["av_duration_delta_ms"],
+        fps=video_quality["fps"],
+        frame_count=video_quality["frame_count"],
+        scene_cut_count=video_quality["scene_cut_count"],
+        freeze_frame_ratio=video_quality["freeze_frame_ratio"],
+        flicker_score=video_quality["flicker_score"],
+        blur_score=video_quality["blur_score"],
+        frame_diff_spike_count=video_quality["frame_diff_spike_count"],
+        # Face metrics
+        face_present_ratio=face["face_present_ratio"],
+        face_bbox_jitter=face["face_bbox_jitter"],
+        landmark_jitter=face["landmark_jitter"],
+        mouth_open_energy=face["mouth_open_energy"],
+        mouth_audio_corr=face["mouth_audio_corr"],
+        blink_count=face["blink_count"],
+        blink_rate_hz=face["blink_rate_hz"],
+        # SyncNet metrics (optional, null until PR17)
         lse_d=None,
         lse_c=None,
         # Status

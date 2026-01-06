@@ -1,4 +1,4 @@
-"""Tier 0 metrics using ffmpeg/opencv/numpy.
+"""Video quality metrics using ffmpeg/opencv/numpy.
 
 Metrics from METRICS.md:
 - decode_ok: video can be decoded and has >= 1 frame
@@ -324,7 +324,7 @@ def compute_frame_diff_spikes(frames: list) -> int:
     return int(np.sum(diffs > threshold))
 
 
-def compute_tier0_metrics(video_path: Path, audio_path: Path) -> dict:
+def compute_video_quality_metrics(video_path: Path, audio_path: Path) -> dict:
     """Compute all Tier 0 metrics.
 
     Args:

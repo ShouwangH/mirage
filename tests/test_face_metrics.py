@@ -1,6 +1,6 @@
-"""Tests for Tier 1 metrics (mediapipe).
+"""Tests for face metrics (mediapipe).
 
-Tier 1 metrics from METRICS.md:
+Face metrics from METRICS.md:
 - face_present_ratio: % frames with detected face
 - face_bbox_jitter: bbox stability
 - landmark_jitter: landmark stability
@@ -15,14 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from mirage.metrics.tier1 import (
+from mirage.metrics.face_metrics import (
     compute_blink_metrics,
     compute_face_bbox_jitter,
+    compute_face_metrics,
     compute_face_present_ratio,
     compute_landmark_jitter,
     compute_mouth_audio_corr,
     compute_mouth_open_energy,
-    compute_tier1_metrics,
     extract_face_data,
 )
 
@@ -327,7 +327,7 @@ class TestComputeTier1Metrics:
         frames = [np.zeros((240, 320, 3), dtype=np.uint8) for _ in range(5)]
         audio_envelope = np.array([0.1, 0.2, 0.3, 0.2, 0.1])
 
-        metrics = compute_tier1_metrics(frames, audio_envelope, fps=30.0)
+        metrics = compute_face_metrics(frames, audio_envelope, fps=30.0)
 
         # Check all Tier 1 fields
         assert "face_present_ratio" in metrics
@@ -347,7 +347,7 @@ class TestComputeTier1Metrics:
         """Empty frames should return default values."""
         import numpy as np
 
-        metrics = compute_tier1_metrics([], np.array([]), fps=30.0)
+        metrics = compute_face_metrics([], np.array([]), fps=30.0)
 
         assert metrics["face_present_ratio"] == 0.0
         assert metrics["face_bbox_jitter"] == 0.0
@@ -363,7 +363,7 @@ class TestIntegrationWithVideo:
     )
     def test_process_test_video(self):
         """Should process a test video without errors."""
-        from mirage.metrics.tier0 import decode_video
+        from mirage.metrics.video_quality import decode_video
 
         with (
             tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as vf,
@@ -386,7 +386,7 @@ class TestIntegrationWithVideo:
             audio_envelope = np.random.rand(len(frames))
 
             # Compute metrics
-            metrics = compute_tier1_metrics(frames, audio_envelope, fps=10.0)
+            metrics = compute_face_metrics(frames, audio_envelope, fps=10.0)
 
             assert "face_present_ratio" in metrics
             assert "mouth_audio_corr" in metrics

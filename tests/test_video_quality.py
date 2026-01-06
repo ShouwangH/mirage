@@ -1,6 +1,6 @@
-"""Tests for Tier 0 metrics (ffmpeg/opencv/numpy).
+"""Tests for video quality metrics (ffmpeg/opencv/numpy).
 
-Tier 0 metrics from METRICS.md:
+Video quality metrics from METRICS.md:
 - decode_ok: video can be decoded
 - video_duration_ms, audio_duration_ms, av_duration_delta_ms
 - fps, frame_count
@@ -17,13 +17,13 @@ from pathlib import Path
 
 import pytest
 
-from mirage.metrics.tier0 import (
+from mirage.metrics.video_quality import (
     compute_blur_score,
     compute_flicker_score,
     compute_frame_diff_spikes,
     compute_freeze_frame_ratio,
     compute_scene_cuts,
-    compute_tier0_metrics,
+    compute_video_quality_metrics,
     decode_video,
     get_av_info,
 )
@@ -342,7 +342,7 @@ class TestComputeTier0Metrics:
             create_test_video(video_path, duration=1.0, fps=30)
             create_test_audio(audio_path, duration=1.0)
 
-            metrics = compute_tier0_metrics(video_path, audio_path)
+            metrics = compute_video_quality_metrics(video_path, audio_path)
 
             # Check all Tier 0 fields
             assert "decode_ok" in metrics
@@ -383,7 +383,7 @@ class TestComputeTier0Metrics:
             create_test_video(video_path, duration=1.0, fps=30)
             create_test_audio(audio_path, duration=1.0)
 
-            metrics = compute_tier0_metrics(video_path, audio_path)
+            metrics = compute_video_quality_metrics(video_path, audio_path)
 
             assert metrics["decode_ok"] is True
         finally:
@@ -398,7 +398,7 @@ class TestComputeTier0Metrics:
         try:
             create_test_audio(audio_path, duration=1.0) if ffmpeg_available() else None
 
-            metrics = compute_tier0_metrics(
+            metrics = compute_video_quality_metrics(
                 Path("/nonexistent/video.mp4"),
                 audio_path if audio_path.exists() else Path("/nonexistent/audio.wav"),
             )
