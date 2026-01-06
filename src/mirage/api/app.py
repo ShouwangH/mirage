@@ -8,10 +8,12 @@ Per ARCHITECTURE.md boundary A (api layer):
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Generator
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from mirage.db.session import get_session
@@ -46,9 +48,23 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     )
 
     # Include routes
-    from mirage.api.routes import experiments
+    from mirage.api.routes import experiments, runs
 
     app.include_router(experiments.router, prefix="/api")
+    app.include_router(runs.router, prefix="/api")
+
+    # Mount static files for artifacts
+    artifacts_dir = Path(os.environ.get("MIRAGE_ARTIFACTS_DIR", "artifacts"))
+    if artifacts_dir.exists():
+        app.mount("/artifacts", StaticFiles(directory=str(artifacts_dir)), name="artifacts")
+    else:
+        # Create a fallback handler for artifacts when directory doesn't exist
+        from fastapi import HTTPException
+
+        @app.get("/artifacts/{path:path}")
+        def artifacts_not_found(path: str):
+            """Return 404 for artifacts when directory not configured."""
+            raise HTTPException(status_code=404, detail="Artifact not found")
 
     # Health check endpoint
     @app.get("/health")
