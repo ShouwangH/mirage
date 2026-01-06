@@ -10,6 +10,7 @@ Thresholds are demo-tuned and should be labeled as "review signals" in UI.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Literal
 
 # Reject thresholds (hard failure)
@@ -22,6 +23,21 @@ FLAG_FREEZE_CEILING = 0.3  # Above this = flagged
 FLAG_BLUR_FLOOR = 20.0  # Below this = flagged (blurry)
 FLAG_MOUTH_AUDIO_CORR_FLOOR = -0.1  # Below this = flagged (poor lip-sync)
 
+StatusBadge = Literal["pass", "flagged", "reject"]
+
+
+@dataclass
+class StatusResult:
+    """Result of status badge computation.
+
+    Attributes:
+        badge: One of 'pass', 'flagged', or 'reject'.
+        reasons: List of human-readable reason strings.
+    """
+
+    badge: StatusBadge
+    reasons: list[str] = field(default_factory=list)
+
 
 def compute_status_badge(
     decode_ok: bool,
@@ -31,7 +47,7 @@ def compute_status_badge(
     freeze_frame_ratio: float,
     blur_score: float,
     mouth_audio_corr: float,
-) -> dict[str, Literal["pass", "flagged", "reject"] | list[str]]:
+) -> StatusResult:
     """Compute status badge and reasons from metrics.
 
     Args:
@@ -44,7 +60,7 @@ def compute_status_badge(
         mouth_audio_corr: Correlation between mouth and audio [-1,1].
 
     Returns:
-        Dict with 'badge' (pass/flagged/reject) and 'reasons' (list[str]).
+        StatusResult with badge and reasons.
     """
     reasons: list[str] = []
     has_reject = False
@@ -82,10 +98,10 @@ def compute_status_badge(
 
     # Determine badge (reject > flagged > pass)
     if has_reject:
-        badge: Literal["pass", "flagged", "reject"] = "reject"
+        badge: StatusBadge = "reject"
     elif has_flag:
         badge = "flagged"
     else:
         badge = "pass"
 
-    return {"badge": badge, "reasons": reasons}
+    return StatusResult(badge=badge, reasons=reasons)

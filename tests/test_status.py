@@ -10,6 +10,7 @@ from mirage.metrics.status import (
     FLAG_MOUTH_AUDIO_CORR_FLOOR,
     REJECT_AV_DELTA_CEILING,
     REJECT_FACE_PRESENT_FLOOR,
+    StatusResult,
     compute_status_badge,
 )
 
@@ -28,8 +29,8 @@ class TestStatusBadgeRejectConditions:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] == "reject"
-        assert "decode_ok=false" in result["reasons"]
+        assert result.badge == "reject"
+        assert "decode_ok=false" in result.reasons
 
     def test_low_face_present_returns_reject(self):
         """face_present_ratio below floor triggers reject."""
@@ -42,8 +43,8 @@ class TestStatusBadgeRejectConditions:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] == "reject"
-        assert any("face_present_ratio" in r for r in result["reasons"])
+        assert result.badge == "reject"
+        assert any("face_present_ratio" in r for r in result.reasons)
 
     def test_face_present_at_threshold_not_rejected(self):
         """face_present_ratio at exactly floor is not rejected."""
@@ -56,7 +57,7 @@ class TestStatusBadgeRejectConditions:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] != "reject"
+        assert result.badge != "reject"
 
     def test_high_av_delta_returns_reject(self):
         """av_duration_delta_ms above ceiling triggers reject."""
@@ -69,8 +70,8 @@ class TestStatusBadgeRejectConditions:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] == "reject"
-        assert any("av_duration_delta_ms" in r for r in result["reasons"])
+        assert result.badge == "reject"
+        assert any("av_duration_delta_ms" in r for r in result.reasons)
 
     def test_av_delta_at_threshold_not_rejected(self):
         """av_duration_delta_ms at exactly ceiling is not rejected."""
@@ -83,7 +84,7 @@ class TestStatusBadgeRejectConditions:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] != "reject"
+        assert result.badge != "reject"
 
     def test_multiple_reject_reasons_collected(self):
         """Multiple reject conditions are all recorded."""
@@ -96,8 +97,8 @@ class TestStatusBadgeRejectConditions:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] == "reject"
-        assert len(result["reasons"]) == 3
+        assert result.badge == "reject"
+        assert len(result.reasons) == 3
 
 
 class TestStatusBadgeFlagConditions:
@@ -114,8 +115,8 @@ class TestStatusBadgeFlagConditions:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] == "flagged"
-        assert any("flicker_score" in r for r in result["reasons"])
+        assert result.badge == "flagged"
+        assert any("flicker_score" in r for r in result.reasons)
 
     def test_high_freeze_frame_ratio_returns_flagged(self):
         """High freeze_frame_ratio triggers flagged."""
@@ -128,8 +129,8 @@ class TestStatusBadgeFlagConditions:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] == "flagged"
-        assert any("freeze_frame_ratio" in r for r in result["reasons"])
+        assert result.badge == "flagged"
+        assert any("freeze_frame_ratio" in r for r in result.reasons)
 
     def test_low_blur_score_returns_flagged(self):
         """Low blur_score triggers flagged."""
@@ -142,8 +143,8 @@ class TestStatusBadgeFlagConditions:
             blur_score=FLAG_BLUR_FLOOR - 1,  # Below threshold
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] == "flagged"
-        assert any("blur_score" in r for r in result["reasons"])
+        assert result.badge == "flagged"
+        assert any("blur_score" in r for r in result.reasons)
 
     def test_low_mouth_audio_corr_returns_flagged(self):
         """Low mouth_audio_corr triggers flagged."""
@@ -156,8 +157,8 @@ class TestStatusBadgeFlagConditions:
             blur_score=100.0,
             mouth_audio_corr=FLAG_MOUTH_AUDIO_CORR_FLOOR - 0.1,  # Below threshold
         )
-        assert result["badge"] == "flagged"
-        assert any("mouth_audio_corr" in r for r in result["reasons"])
+        assert result.badge == "flagged"
+        assert any("mouth_audio_corr" in r for r in result.reasons)
 
     def test_multiple_flag_reasons_collected(self):
         """Multiple flag conditions are all recorded."""
@@ -170,8 +171,8 @@ class TestStatusBadgeFlagConditions:
             blur_score=FLAG_BLUR_FLOOR - 1,
             mouth_audio_corr=FLAG_MOUTH_AUDIO_CORR_FLOOR - 0.1,
         )
-        assert result["badge"] == "flagged"
-        assert len(result["reasons"]) == 4
+        assert result.badge == "flagged"
+        assert len(result.reasons) == 4
 
 
 class TestStatusBadgePassConditions:
@@ -188,8 +189,8 @@ class TestStatusBadgePassConditions:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] == "pass"
-        assert result["reasons"] == []
+        assert result.badge == "pass"
+        assert result.reasons == []
 
     def test_metrics_at_safe_boundaries_returns_pass(self):
         """Metrics at safe boundary values return pass."""
@@ -202,8 +203,8 @@ class TestStatusBadgePassConditions:
             blur_score=FLAG_BLUR_FLOOR,  # At floor
             mouth_audio_corr=FLAG_MOUTH_AUDIO_CORR_FLOOR,  # At floor
         )
-        assert result["badge"] == "pass"
-        assert result["reasons"] == []
+        assert result.badge == "pass"
+        assert result.reasons == []
 
 
 class TestStatusBadgePriority:
@@ -220,17 +221,17 @@ class TestStatusBadgePriority:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] == "reject"
+        assert result.badge == "reject"
         # Both reasons should be present
-        assert any("decode_ok" in r for r in result["reasons"])
-        assert any("flicker_score" in r for r in result["reasons"])
+        assert any("decode_ok" in r for r in result.reasons)
+        assert any("flicker_score" in r for r in result.reasons)
 
 
-class TestStatusBadgeReturn:
+class TestStatusResultType:
     """Test return value structure."""
 
-    def test_return_has_badge_key(self):
-        """Result has 'badge' key."""
+    def test_returns_status_result_type(self):
+        """Result is a StatusResult dataclass."""
         result = compute_status_badge(
             decode_ok=True,
             face_present_ratio=0.9,
@@ -240,10 +241,10 @@ class TestStatusBadgeReturn:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert "badge" in result
+        assert isinstance(result, StatusResult)
 
-    def test_return_has_reasons_key(self):
-        """Result has 'reasons' key."""
+    def test_result_has_badge_attribute(self):
+        """Result has badge attribute."""
         result = compute_status_badge(
             decode_ok=True,
             face_present_ratio=0.9,
@@ -253,8 +254,21 @@ class TestStatusBadgeReturn:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert "reasons" in result
-        assert isinstance(result["reasons"], list)
+        assert hasattr(result, "badge")
+
+    def test_result_has_reasons_attribute(self):
+        """Result has reasons attribute as list."""
+        result = compute_status_badge(
+            decode_ok=True,
+            face_present_ratio=0.9,
+            av_duration_delta_ms=100,
+            flicker_score=1.0,
+            freeze_frame_ratio=0.0,
+            blur_score=100.0,
+            mouth_audio_corr=0.5,
+        )
+        assert hasattr(result, "reasons")
+        assert isinstance(result.reasons, list)
 
     def test_badge_is_literal_type(self):
         """Badge is one of pass/flagged/reject."""
@@ -267,4 +281,4 @@ class TestStatusBadgeReturn:
             blur_score=100.0,
             mouth_audio_corr=0.5,
         )
-        assert result["badge"] in ("pass", "flagged", "reject")
+        assert result.badge in ("pass", "flagged", "reject")

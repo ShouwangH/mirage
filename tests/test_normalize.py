@@ -53,9 +53,16 @@ class TestProbeVideo:
         try:
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "testsrc=duration=1:size=320x240:rate=30",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc=duration=1:size=320x240:rate=30",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
                     str(test_video),
                 ],
                 capture_output=True,
@@ -91,8 +98,12 @@ class TestProbeAudio:
         try:
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "sine=frequency=440:duration=2",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:duration=2",
                     str(test_audio),
                 ],
                 capture_output=True,
@@ -131,9 +142,16 @@ class TestNormalizeVideo:
         try:
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "testsrc=duration=3:size=320x240:rate=24",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc=duration=3:size=320x240:rate=24",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
                     str(test_video),
                 ],
                 capture_output=True,
@@ -142,8 +160,12 @@ class TestNormalizeVideo:
 
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "sine=frequency=440:duration=2",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:duration=2",
                     str(test_audio),
                 ],
                 capture_output=True,
@@ -177,9 +199,16 @@ class TestNormalizeVideo:
         try:
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "testsrc=duration=5:size=320x240:rate=24",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc=duration=5:size=320x240:rate=24",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
                     str(test_video),
                 ],
                 capture_output=True,
@@ -188,8 +217,12 @@ class TestNormalizeVideo:
 
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "sine=frequency=440:duration=2",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:duration=2",
                     str(test_audio),
                 ],
                 capture_output=True,
@@ -222,9 +255,16 @@ class TestNormalizeVideo:
         try:
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "testsrc=duration=1:size=320x240:rate=30",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc=duration=1:size=320x240:rate=30",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
                     str(test_video),
                 ],
                 capture_output=True,
@@ -233,8 +273,12 @@ class TestNormalizeVideo:
 
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "sine=frequency=440:duration=1",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:duration=1",
                     str(test_audio),
                 ],
                 capture_output=True,
@@ -280,9 +324,16 @@ class TestCanonicalFormat:
         try:
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "testsrc=duration=1:size=320x240:rate=30",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc=duration=1:size=320x240:rate=30",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
                     str(test_video),
                 ],
                 capture_output=True,
@@ -291,8 +342,12 @@ class TestCanonicalFormat:
 
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "sine=frequency=440:duration=1",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:duration=1",
                     str(test_audio),
                 ],
                 capture_output=True,
@@ -303,10 +358,15 @@ class TestCanonicalFormat:
 
             result = subprocess.run(
                 [
-                    "ffprobe", "-v", "error",
-                    "-select_streams", "v:0",
-                    "-show_entries", "stream=codec_name",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=codec_name",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
                     str(output_path),
                 ],
                 capture_output=True,
@@ -335,9 +395,16 @@ class TestCanonicalFormat:
         try:
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "testsrc=duration=1:size=320x240:rate=24",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc=duration=1:size=320x240:rate=24",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
                     str(test_video),
                 ],
                 capture_output=True,
@@ -346,8 +413,12 @@ class TestCanonicalFormat:
 
             subprocess.run(
                 [
-                    "ffmpeg", "-y", "-f", "lavfi",
-                    "-i", "sine=frequency=440:duration=1",
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:duration=1",
                     str(test_audio),
                 ],
                 capture_output=True,
@@ -358,10 +429,15 @@ class TestCanonicalFormat:
 
             result = subprocess.run(
                 [
-                    "ffprobe", "-v", "error",
-                    "-select_streams", "v:0",
-                    "-show_entries", "stream=r_frame_rate",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=r_frame_rate",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
                     str(output_path),
                 ],
                 capture_output=True,

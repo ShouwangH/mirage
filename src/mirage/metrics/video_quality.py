@@ -1,26 +1,21 @@
-"""Video quality metrics using opencv/numpy.
+"""Video quality metrics - pure computations on frame data.
 
 Metrics from METRICS.md:
-- decode_ok: video can be decoded and has >= 1 frame
-- video_duration_ms, audio_duration_ms, av_duration_delta_ms
-- fps, frame_count
-- scene_cut_count: abrupt scene changes
 - freeze_frame_ratio: ratio of frozen frames
 - flicker_score: luminance instability
 - blur_score: variance of Laplacian (higher = sharper)
+- scene_cut_count: abrupt scene changes
 - frame_diff_spike_count: glitch detection
 
-Note: This module uses cv2/numpy for image processing transforms (grayscale,
-histogram, laplacian). These are deterministic array operations and belong
-in the metrics layer, not adapters. Video file IO uses adapter/media/.
+This module contains ONLY pure computations on numpy arrays.
+Video decoding and probing are done by adapters called from bundle.py.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+from dataclasses import dataclass
 
-from mirage.adapter.media import probe_audio, probe_video
-from mirage.adapter.media.video_decode import VideoReader
+import numpy as np
 
 # Thresholds for metric computation
 FREEZE_EPSILON = 1.0  # Mean absolute diff below this = frozen
@@ -28,80 +23,36 @@ SCENE_CUT_THRESHOLD = 0.5  # Histogram chi-squared diff threshold for scene cut
 SPIKE_SIGMA = 3.0  # Frames with diff > mean + SPIKE_SIGMA * std are spikes
 
 
-def get_av_info(video_path: Path, audio_path: Path) -> dict:
-    """Get audio/video duration and fps info.
+@dataclass
+class VideoQualityMetrics:
+    """Result of video quality metric computation.
 
-    Args:
-        video_path: Path to video file.
-        audio_path: Path to audio file.
-
-    Returns:
-        Dict with video_duration_ms, audio_duration_ms, av_duration_delta_ms,
-        fps, frame_count.
-
-    Raises:
-        FileNotFoundError: If video file doesn't exist.
-        RuntimeError: If probe fails or times out.
+    All metrics are computed from frame arrays.
     """
-    # Get video info via adapter
-    video_info = probe_video(video_path)
 
-    # Get audio duration
-    audio_duration_ms = 0
-    if audio_path.exists():
-        try:
-            audio_info = probe_audio(audio_path)
-            audio_duration_ms = audio_info.duration_ms
-        except RuntimeError:
-            pass  # Audio probe failed, use 0
-
-    return {
-        "video_duration_ms": video_info.duration_ms,
-        "audio_duration_ms": audio_duration_ms,
-        "av_duration_delta_ms": abs(video_info.duration_ms - audio_duration_ms),
-        "fps": video_info.fps,
-        "frame_count": video_info.frame_count,
-    }
+    decode_ok: bool
+    video_duration_ms: int
+    audio_duration_ms: int
+    av_duration_delta_ms: int
+    fps: float
+    frame_count: int
+    scene_cut_count: int
+    freeze_frame_ratio: float
+    flicker_score: float
+    blur_score: float
+    frame_diff_spike_count: int
 
 
-def decode_video(video_path: Path, max_frames: int = 0) -> list:
-    """Decode video frames via adapter.
-
-    Args:
-        video_path: Path to video file.
-        max_frames: Maximum frames to decode (0 = all).
-
-    Returns:
-        List of numpy arrays (BGR frames), empty if decode fails.
-    """
-    if not video_path.exists():
-        return []
-
-    try:
-        with VideoReader(video_path) as reader:
-            frames = list(
-                reader.iter_frames(max_frames=max_frames if max_frames > 0 else None)
-            )
-            return [f.bgr for f in frames]
-    except (FileNotFoundError, RuntimeError):
-        return []
-
-
-def compute_freeze_frame_ratio(frames: list) -> float:
+def compute_freeze_frame_ratio(frames: list[np.ndarray]) -> float:
     """Compute ratio of frozen (nearly identical) consecutive frames.
 
     Args:
-        frames: List of numpy array frames.
+        frames: List of numpy array frames (BGR).
 
     Returns:
         Ratio in [0, 1], where 1 = all frames frozen.
     """
     if len(frames) < 2:
-        return 0.0
-
-    try:
-        import numpy as np
-    except ImportError:
         return 0.0
 
     freeze_count = 0
@@ -114,13 +65,13 @@ def compute_freeze_frame_ratio(frames: list) -> float:
     return freeze_count / (len(frames) - 1)
 
 
-def compute_flicker_score(frames: list) -> float:
+def compute_flicker_score(frames: list[np.ndarray]) -> float:
     """Compute flicker score based on luminance instability.
 
     Higher score = more flicker.
 
     Args:
-        frames: List of numpy array frames.
+        frames: List of numpy array frames (BGR).
 
     Returns:
         Flicker score (stddev of mean luminance).
@@ -130,7 +81,6 @@ def compute_flicker_score(frames: list) -> float:
 
     try:
         import cv2
-        import numpy as np
     except ImportError:
         return 0.0
 
@@ -146,13 +96,13 @@ def compute_flicker_score(frames: list) -> float:
     return float(np.std(luminances))
 
 
-def compute_blur_score(frames: list) -> float:
+def compute_blur_score(frames: list[np.ndarray]) -> float:
     """Compute blur score using variance of Laplacian.
 
     Higher score = sharper image (less blur).
 
     Args:
-        frames: List of numpy array frames.
+        frames: List of numpy array frames (BGR).
 
     Returns:
         Mean variance of Laplacian across frames.
@@ -162,7 +112,6 @@ def compute_blur_score(frames: list) -> float:
 
     try:
         import cv2
-        import numpy as np
     except ImportError:
         return 0.0
 
@@ -178,11 +127,11 @@ def compute_blur_score(frames: list) -> float:
     return float(np.mean(variances))
 
 
-def compute_scene_cuts(frames: list) -> int:
+def compute_scene_cuts(frames: list[np.ndarray]) -> int:
     """Detect scene cuts using histogram difference.
 
     Args:
-        frames: List of numpy array frames.
+        frames: List of numpy array frames (BGR).
 
     Returns:
         Number of detected scene cuts.
@@ -192,7 +141,6 @@ def compute_scene_cuts(frames: list) -> int:
 
     try:
         import cv2
-        import numpy as np
     except ImportError:
         return 0
 
@@ -219,21 +167,16 @@ def compute_scene_cuts(frames: list) -> int:
     return cuts
 
 
-def compute_frame_diff_spikes(frames: list) -> int:
+def compute_frame_diff_spikes(frames: list[np.ndarray]) -> int:
     """Detect frames with abnormally high difference from previous.
 
     Args:
-        frames: List of numpy array frames.
+        frames: List of numpy array frames (BGR).
 
     Returns:
         Number of spike frames (potential glitches).
     """
     if len(frames) < 2:
-        return 0
-
-    try:
-        import numpy as np
-    except ImportError:
         return 0
 
     diffs = []
@@ -244,63 +187,64 @@ def compute_frame_diff_spikes(frames: list) -> int:
     if len(diffs) == 0:
         return 0
 
-    diffs = np.array(diffs)
-    mean_diff = np.mean(diffs)
-    std_diff = np.std(diffs)
+    diffs_arr = np.array(diffs)
+    mean_diff = np.mean(diffs_arr)
+    std_diff = np.std(diffs_arr)
 
     if std_diff == 0:
         return 0
 
     threshold = mean_diff + SPIKE_SIGMA * std_diff
-    return int(np.sum(diffs > threshold))
+    return int(np.sum(diffs_arr > threshold))
 
 
-def compute_video_quality_metrics(video_path: Path, audio_path: Path) -> dict:
-    """Compute all Tier 0 metrics.
+def compute_video_quality(
+    frames: list[np.ndarray],
+    video_duration_ms: int,
+    audio_duration_ms: int,
+    fps: float,
+) -> VideoQualityMetrics:
+    """Compute all video quality metrics from frames.
+
+    This is a pure computation function - video decoding and probing
+    are done by adapters in bundle.py.
 
     Args:
-        video_path: Path to canonical video.
-        audio_path: Path to canonical audio.
+        frames: List of BGR numpy arrays from video.
+        video_duration_ms: Video duration in milliseconds.
+        audio_duration_ms: Audio duration in milliseconds.
+        fps: Video frame rate.
 
     Returns:
-        Dict with all Tier 0 metric fields.
+        VideoQualityMetrics with all computed values.
     """
-    # Initialize with failure defaults
-    metrics = {
-        "decode_ok": False,
-        "video_duration_ms": 0,
-        "audio_duration_ms": 0,
-        "av_duration_delta_ms": 0,
-        "fps": 0.0,
-        "frame_count": 0,
-        "scene_cut_count": 0,
-        "freeze_frame_ratio": 0.0,
-        "flicker_score": 0.0,
-        "blur_score": 0.0,
-        "frame_diff_spike_count": 0,
-    }
+    decode_ok = len(frames) > 0
 
-    # Try to get A/V info
-    try:
-        av_info = get_av_info(video_path, audio_path)
-        metrics.update(av_info)
-    except (FileNotFoundError, RuntimeError):
-        return metrics
+    if not decode_ok:
+        return VideoQualityMetrics(
+            decode_ok=False,
+            video_duration_ms=video_duration_ms,
+            audio_duration_ms=audio_duration_ms,
+            av_duration_delta_ms=abs(video_duration_ms - audio_duration_ms),
+            fps=fps,
+            frame_count=0,
+            scene_cut_count=0,
+            freeze_frame_ratio=0.0,
+            flicker_score=0.0,
+            blur_score=0.0,
+            frame_diff_spike_count=0,
+        )
 
-    # Try to decode video
-    frames = decode_video(video_path)
-    if len(frames) == 0:
-        return metrics
-
-    # Decode succeeded
-    metrics["decode_ok"] = True
-    metrics["frame_count"] = len(frames)
-
-    # Compute frame-based metrics
-    metrics["freeze_frame_ratio"] = compute_freeze_frame_ratio(frames)
-    metrics["flicker_score"] = compute_flicker_score(frames)
-    metrics["blur_score"] = compute_blur_score(frames)
-    metrics["scene_cut_count"] = compute_scene_cuts(frames)
-    metrics["frame_diff_spike_count"] = compute_frame_diff_spikes(frames)
-
-    return metrics
+    return VideoQualityMetrics(
+        decode_ok=True,
+        video_duration_ms=video_duration_ms,
+        audio_duration_ms=audio_duration_ms,
+        av_duration_delta_ms=abs(video_duration_ms - audio_duration_ms),
+        fps=fps,
+        frame_count=len(frames),
+        scene_cut_count=compute_scene_cuts(frames),
+        freeze_frame_ratio=compute_freeze_frame_ratio(frames),
+        flicker_score=compute_flicker_score(frames),
+        blur_score=compute_blur_score(frames),
+        frame_diff_spike_count=compute_frame_diff_spikes(frames),
+    )

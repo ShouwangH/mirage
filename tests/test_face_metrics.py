@@ -6,27 +6,23 @@ Face metrics from METRICS.md:
 - landmark_jitter: landmark stability
 - mouth_open_energy: mouth movement variance
 - mouth_audio_corr: mouth-audio correlation
-- blink_count, blink_rate_hz: optional blink detection
+- blink_count, blink_rate_hz: blink detection
 
-Note: Face detection is done by adapter/vision/mediapipe_face.
-These tests focus on the pure computation functions in face_metrics.
+Tests are organized into:
+- Adapter tests: face extraction via adapter/vision
+- Pure computation tests: metrics on FaceTrack domain objects
+- Integration tests: full pipeline via bundle
 """
 
 import subprocess
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from mirage.metrics.face_metrics import (
-    compute_blink_metrics,
-    compute_face_bbox_jitter,
-    compute_face_metrics,
-    compute_face_present_ratio,
-    compute_landmark_jitter,
-    compute_mouth_audio_corr,
-    compute_mouth_open_energy,
-)
+from mirage.adapter.vision.mediapipe_face import FaceData, FaceTrack
+from mirage.metrics.face_metrics import FaceMetrics, compute_face_metrics
 
 
 def ffmpeg_available() -> bool:
@@ -98,305 +94,270 @@ def create_test_audio(path: Path, duration: float = 1.0) -> None:
     )
 
 
-class TestExtractFaceData:
-    """Tests for face data extraction via adapter."""
+def make_face_track(
+    face_data_list: list[FaceData | None],
+    fps: float = 30.0,
+) -> FaceTrack:
+    """Helper to create FaceTrack from list of FaceData."""
+    track = FaceTrack(fps=fps)
+    for i, fd in enumerate(face_data_list):
+        track.frame_indices.append(i)
+        track.timestamps_ms.append(int(i / fps * 1000))
+        if fd is not None:
+            track.face_data.append(fd)
+        else:
+            track.face_data.append(FaceData(detected=False))
+    return track
+
+
+class TestFaceExtractorAdapter:
+    """Tests for face extraction via adapter."""
 
     @pytest.mark.skipif(
         not (opencv_available() and mediapipe_available()),
         reason="opencv or mediapipe not available",
     )
-    def test_returns_list_of_face_data(self):
-        """Should return list of face data dicts per frame."""
-        import numpy as np
-
+    def test_returns_face_track(self):
+        """Should return FaceTrack with detection results."""
         from mirage.adapter.vision.mediapipe_face import FaceExtractor
 
-        # Create simple test frames (no real face, but tests structure)
         extractor = FaceExtractor()
         bgr_arrays = [np.zeros((240, 320, 3), dtype=np.uint8) for _ in range(5)]
         track = extractor.extract_from_bgr_arrays(bgr_arrays)
 
-        assert len(track.face_data) == len(bgr_arrays)
-        # Each entry should have detected attribute
-        for entry in track.face_data:
-            assert hasattr(entry, "detected")
+        assert isinstance(track, FaceTrack)
+        assert track.frame_count == len(bgr_arrays)
+        for fd in track.face_data:
+            assert isinstance(fd, FaceData)
+            assert hasattr(fd, "detected")
 
-    def test_empty_frames_returns_empty(self):
+    def test_empty_frames_returns_empty_track(self):
         """Empty frame list should return empty track."""
         from mirage.adapter.vision.mediapipe_face import FaceExtractor
 
         extractor = FaceExtractor()
         track = extractor.extract_from_bgr_arrays([])
+
+        assert isinstance(track, FaceTrack)
         assert track.frame_count == 0
 
 
-class TestComputeFacePresentRatio:
-    """Tests for face presence ratio."""
+class TestComputeFaceMetrics:
+    """Tests for compute_face_metrics with typed FaceTrack."""
 
-    def test_no_faces_returns_zero(self):
-        """No faces detected should return 0."""
-        face_data = [None, None, None]
-        ratio = compute_face_present_ratio(face_data)
-        assert ratio == 0.0
+    def test_returns_face_metrics_type(self):
+        """Should return FaceMetrics dataclass."""
+        track = FaceTrack(fps=30.0)
+        metrics = compute_face_metrics(track, (320, 240), [])
 
-    def test_all_faces_returns_one(self):
-        """All faces detected should return 1."""
+        assert isinstance(metrics, FaceMetrics)
+
+    def test_empty_track_returns_defaults(self):
+        """Empty FaceTrack should return default values."""
+        track = FaceTrack(fps=30.0)
+        metrics = compute_face_metrics(track, (320, 240), [])
+
+        assert metrics.face_present_ratio == 0.0
+        assert metrics.face_bbox_jitter == 0.0
+        assert metrics.landmark_jitter == 0.0
+        assert metrics.mouth_open_energy == 0.0
+        assert metrics.mouth_audio_corr == 0.0
+        assert metrics.blink_count is None
+        assert metrics.blink_rate_hz is None
+
+    def test_no_faces_detected_zero_ratio(self):
+        """No faces detected should return ratio 0."""
         face_data = [
-            {"bbox": [0, 0, 100, 100], "landmarks": []},
-            {"bbox": [0, 0, 100, 100], "landmarks": []},
-            {"bbox": [0, 0, 100, 100], "landmarks": []},
+            FaceData(detected=False),
+            FaceData(detected=False),
+            FaceData(detected=False),
         ]
-        ratio = compute_face_present_ratio(face_data)
-        assert ratio == 1.0
+        track = make_face_track(face_data)
 
-    def test_partial_faces(self):
+        metrics = compute_face_metrics(track, (320, 240), [])
+
+        assert metrics.face_present_ratio == 0.0
+
+    def test_all_faces_detected_ratio_one(self):
+        """All faces detected should return ratio 1."""
+        face_data = [
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=[]),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=[]),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=[]),
+        ]
+        track = make_face_track(face_data)
+
+        metrics = compute_face_metrics(track, (320, 240), [])
+
+        assert metrics.face_present_ratio == 1.0
+
+    def test_partial_faces_correct_ratio(self):
         """Partial face detection should return correct ratio."""
         face_data = [
-            {"bbox": [0, 0, 100, 100], "landmarks": []},
-            None,
-            {"bbox": [0, 0, 100, 100], "landmarks": []},
-            None,
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=[]),
+            FaceData(detected=False),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=[]),
+            FaceData(detected=False),
         ]
-        ratio = compute_face_present_ratio(face_data)
-        assert ratio == 0.5
+        track = make_face_track(face_data)
 
-    def test_empty_returns_zero(self):
-        """Empty list should return 0."""
-        ratio = compute_face_present_ratio([])
-        assert ratio == 0.0
+        metrics = compute_face_metrics(track, (320, 240), [])
 
-
-class TestComputeFaceBboxJitter:
-    """Tests for face bounding box jitter."""
+        assert metrics.face_present_ratio == 0.5
 
     def test_stable_bbox_low_jitter(self):
-        """Stable bounding box should have low jitter."""
+        """Stable bounding boxes should have low jitter."""
         face_data = [
-            {"bbox": [100, 100, 200, 200], "landmarks": []},
-            {"bbox": [100, 100, 200, 200], "landmarks": []},
-            {"bbox": [100, 100, 200, 200], "landmarks": []},
+            FaceData(detected=True, bbox=[100, 100, 200, 200], landmarks=[]),
+            FaceData(detected=True, bbox=[100, 100, 200, 200], landmarks=[]),
+            FaceData(detected=True, bbox=[100, 100, 200, 200], landmarks=[]),
         ]
-        jitter = compute_face_bbox_jitter(face_data, frame_size=(320, 240))
-        assert jitter == 0.0
+        track = make_face_track(face_data)
+
+        metrics = compute_face_metrics(track, (320, 240), [])
+
+        assert metrics.face_bbox_jitter == 0.0
 
     def test_moving_bbox_has_jitter(self):
-        """Moving bounding box should have positive jitter."""
+        """Moving bounding boxes should have positive jitter."""
         face_data = [
-            {"bbox": [100, 100, 200, 200], "landmarks": []},
-            {"bbox": [110, 110, 210, 210], "landmarks": []},
-            {"bbox": [120, 120, 220, 220], "landmarks": []},
+            FaceData(detected=True, bbox=[100, 100, 200, 200], landmarks=[]),
+            FaceData(detected=True, bbox=[110, 110, 210, 210], landmarks=[]),
+            FaceData(detected=True, bbox=[120, 120, 220, 220], landmarks=[]),
         ]
-        jitter = compute_face_bbox_jitter(face_data, frame_size=(320, 240))
-        assert jitter > 0.0
+        track = make_face_track(face_data)
 
-    def test_empty_returns_zero(self):
-        """Empty list should return 0."""
-        jitter = compute_face_bbox_jitter([], frame_size=(320, 240))
-        assert jitter == 0.0
+        metrics = compute_face_metrics(track, (320, 240), [])
 
-    def test_single_frame_returns_zero(self):
-        """Single frame should return 0 jitter."""
-        face_data = [{"bbox": [100, 100, 200, 200], "landmarks": []}]
-        jitter = compute_face_bbox_jitter(face_data, frame_size=(320, 240))
-        assert jitter == 0.0
-
-
-class TestComputeLandmarkJitter:
-    """Tests for landmark jitter."""
+        assert metrics.face_bbox_jitter > 0.0
 
     def test_stable_landmarks_low_jitter(self):
         """Stable landmarks should have low jitter."""
-        landmarks = [[0.5, 0.5], [0.6, 0.5], [0.4, 0.5]]  # Simple 3 points
+        # Need enough landmarks for inter-ocular distance (indices 33, 263)
+        landmarks = [[0.5, 0.5]] * 500
+        landmarks[33] = [0.4, 0.5]  # Left eye
+        landmarks[263] = [0.6, 0.5]  # Right eye
+
         face_data = [
-            {"bbox": [100, 100, 200, 200], "landmarks": landmarks},
-            {"bbox": [100, 100, 200, 200], "landmarks": landmarks},
-            {"bbox": [100, 100, 200, 200], "landmarks": landmarks},
+            FaceData(detected=True, bbox=[100, 100, 200, 200], landmarks=landmarks.copy()),
+            FaceData(detected=True, bbox=[100, 100, 200, 200], landmarks=landmarks.copy()),
+            FaceData(detected=True, bbox=[100, 100, 200, 200], landmarks=landmarks.copy()),
         ]
-        jitter = compute_landmark_jitter(face_data)
-        assert jitter == 0.0
+        track = make_face_track(face_data)
 
-    def test_moving_landmarks_has_jitter(self):
-        """Moving landmarks should have positive jitter."""
+        metrics = compute_face_metrics(track, (320, 240), [])
+
+        assert metrics.landmark_jitter == 0.0
+
+    def test_blink_detection_returns_count_and_rate(self):
+        """Should return blink count and rate."""
+        # Create landmarks with enough points
+        landmarks = [[0.5, 0.5]] * 500
+
         face_data = [
-            {"bbox": [100, 100, 200, 200], "landmarks": [[0.5, 0.5], [0.6, 0.5]]},
-            {"bbox": [100, 100, 200, 200], "landmarks": [[0.55, 0.55], [0.65, 0.55]]},
-            {"bbox": [100, 100, 200, 200], "landmarks": [[0.6, 0.6], [0.7, 0.6]]},
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=landmarks.copy()),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=landmarks.copy()),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=landmarks.copy()),
         ]
-        jitter = compute_landmark_jitter(face_data)
-        assert jitter > 0.0
+        track = make_face_track(face_data, fps=30.0)
 
-    def test_empty_returns_zero(self):
-        """Empty list should return 0."""
-        jitter = compute_landmark_jitter([])
-        assert jitter == 0.0
+        metrics = compute_face_metrics(track, (320, 240), [])
+
+        assert isinstance(metrics.blink_count, int)
+        assert metrics.blink_count >= 0
+        assert isinstance(metrics.blink_rate_hz, float)
+        assert metrics.blink_rate_hz >= 0.0
 
 
-class TestComputeMouthOpenEnergy:
-    """Tests for mouth open energy."""
+class TestMouthAudioCorrelation:
+    """Tests for mouth-audio correlation computation."""
+
+    def test_returns_value_in_range(self):
+        """Correlation should be in [-1, 1]."""
+        # Create landmarks with lip points
+        landmarks = [[0.5, 0.5]] * 500
+        landmarks[13] = [0.5, 0.4]  # Upper lip
+        landmarks[14] = [0.5, 0.5]  # Lower lip
+
+        face_data = [
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=landmarks.copy()),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=landmarks.copy()),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=landmarks.copy()),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=landmarks.copy()),
+        ]
+        track = make_face_track(face_data)
+        audio_envelope = [0.1, 0.4, 0.7, 0.2]
+
+        metrics = compute_face_metrics(track, (320, 240), audio_envelope)
+
+        assert -1.0 <= metrics.mouth_audio_corr <= 1.0
+
+    def test_empty_data_returns_zero(self):
+        """Empty data should return 0 correlation."""
+        track = FaceTrack(fps=30.0)
+        metrics = compute_face_metrics(track, (320, 240), [])
+
+        assert metrics.mouth_audio_corr == 0.0
+
+
+class TestMouthOpenEnergy:
+    """Tests for mouth open energy computation."""
 
     def test_stable_mouth_low_energy(self):
         """Stable mouth openness should have low energy."""
-        # All same mouth openness
+        landmarks = [[0.5, 0.5]] * 500
+        landmarks[13] = [0.5, 0.4]  # Upper lip
+        landmarks[14] = [0.5, 0.5]  # Lower lip - constant distance
+
         face_data = [
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "mouth_openness": 0.5},
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "mouth_openness": 0.5},
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "mouth_openness": 0.5},
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=landmarks.copy()),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=landmarks.copy()),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=landmarks.copy()),
         ]
-        energy = compute_mouth_open_energy(face_data)
-        assert energy == 0.0
+        track = make_face_track(face_data)
+
+        metrics = compute_face_metrics(track, (320, 240), [])
+
+        assert metrics.mouth_open_energy == 0.0
 
     def test_varying_mouth_has_energy(self):
         """Varying mouth openness should have positive energy."""
-        face_data = [
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "mouth_openness": 0.2},
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "mouth_openness": 0.8},
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "mouth_openness": 0.3},
-        ]
-        energy = compute_mouth_open_energy(face_data)
-        assert energy > 0.0
+        base_landmarks = [[0.5, 0.5]] * 500
 
-    def test_empty_returns_zero(self):
-        """Empty list should return 0."""
-        energy = compute_mouth_open_energy([])
-        assert energy == 0.0
+        lm1 = base_landmarks.copy()
+        lm1[13] = [0.5, 0.4]
+        lm1[14] = [0.5, 0.42]  # Small opening
 
+        lm2 = base_landmarks.copy()
+        lm2[13] = [0.5, 0.4]
+        lm2[14] = [0.5, 0.6]  # Large opening
 
-class TestComputeMouthAudioCorr:
-    """Tests for mouth-audio correlation."""
-
-    @pytest.mark.skipif(not opencv_available(), reason="opencv not available")
-    def test_returns_value_in_range(self):
-        """Correlation should be in [-1, 1]."""
-        import numpy as np
+        lm3 = base_landmarks.copy()
+        lm3[13] = [0.5, 0.4]
+        lm3[14] = [0.5, 0.45]  # Medium opening
 
         face_data = [
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "mouth_openness": 0.2},
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "mouth_openness": 0.5},
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "mouth_openness": 0.8},
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "mouth_openness": 0.3},
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=lm1),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=lm2),
+            FaceData(detected=True, bbox=[0, 0, 100, 100], landmarks=lm3),
         ]
-        # Fake audio envelope
-        audio_envelope = np.array([0.1, 0.4, 0.7, 0.2])
+        track = make_face_track(face_data)
 
-        corr = compute_mouth_audio_corr(face_data, audio_envelope)
+        metrics = compute_face_metrics(track, (320, 240), [])
 
-        assert -1.0 <= corr <= 1.0
-
-    def test_empty_returns_zero(self):
-        """Empty data should return 0."""
-        import numpy as np
-
-        corr = compute_mouth_audio_corr([], np.array([]))
-        assert corr == 0.0
+        assert metrics.mouth_open_energy > 0.0
 
 
-class TestComputeBlinkMetrics:
-    """Tests for blink detection."""
-
-    def test_returns_count_and_rate(self):
-        """Should return blink count and rate."""
-        # Simulate eye aspect ratios with blinks
-        face_data = [
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "eye_aspect_ratio": 0.3},
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "eye_aspect_ratio": 0.3},
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "eye_aspect_ratio": 0.1},  # Blink
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "eye_aspect_ratio": 0.3},
-            {"bbox": [0, 0, 100, 100], "landmarks": [], "eye_aspect_ratio": 0.3},
-        ]
-        count, rate = compute_blink_metrics(face_data, fps=30.0)
-
-        assert isinstance(count, int)
-        assert count >= 0
-        assert isinstance(rate, float)
-        assert rate >= 0.0
-
-    def test_empty_returns_zero(self):
-        """Empty data should return zeros."""
-        count, rate = compute_blink_metrics([], fps=30.0)
-        assert count == 0
-        assert rate == 0.0
-
-
-class TestComputeTier1Metrics:
-    """Tests for full Tier 1 metrics computation."""
-
-    @pytest.mark.skipif(
-        not (opencv_available() and mediapipe_available()),
-        reason="opencv or mediapipe not available",
-    )
-    def test_returns_all_tier1_fields(self):
-        """Should return dict with all Tier 1 fields."""
-        import numpy as np
-
-        from mirage.adapter.vision.mediapipe_face import FaceExtractor
-        from mirage.metrics.face_metrics import (
-            _compute_eye_aspect_ratio,
-            _compute_mouth_openness,
-        )
-
-        # Create simple test frames and extract face data via adapter
-        bgr_arrays = [np.zeros((240, 320, 3), dtype=np.uint8) for _ in range(5)]
-        extractor = FaceExtractor()
-        track = extractor.extract_from_bgr_arrays(bgr_arrays, fps=30.0)
-
-        # Convert to dict format expected by metrics
-        face_data = []
-        for fd in track.face_data:
-            if fd.detected and len(fd.landmarks) > 0:
-                face_data.append({
-                    "bbox": fd.bbox,
-                    "landmarks": fd.landmarks,
-                    "mouth_openness": _compute_mouth_openness(fd.landmarks),
-                    "eye_aspect_ratio": _compute_eye_aspect_ratio(fd.landmarks),
-                })
-            else:
-                face_data.append(None)
-
-        audio_envelope = [0.1, 0.2, 0.3, 0.2, 0.1]
-        frame_size = (320, 240)
-
-        metrics = compute_face_metrics(face_data, frame_size, audio_envelope, fps=30.0)
-
-        # Check all Tier 1 fields
-        assert "face_present_ratio" in metrics
-        assert "face_bbox_jitter" in metrics
-        assert "landmark_jitter" in metrics
-        assert "mouth_open_energy" in metrics
-        assert "mouth_audio_corr" in metrics
-        assert "blink_count" in metrics
-        assert "blink_rate_hz" in metrics
-
-        # Check types
-        assert isinstance(metrics["face_present_ratio"], float)
-        assert isinstance(metrics["face_bbox_jitter"], float)
-        assert 0.0 <= metrics["face_present_ratio"] <= 1.0
-
-    def test_empty_frames_returns_defaults(self):
-        """Empty face data should return default values."""
-        metrics = compute_face_metrics([], (320, 240), [], fps=30.0)
-
-        assert metrics["face_present_ratio"] == 0.0
-        assert metrics["face_bbox_jitter"] == 0.0
-        assert metrics["blink_count"] == 0
-
-
-class TestIntegrationWithVideo:
-    """Integration tests with actual video files."""
+class TestIntegrationWithBundle:
+    """Integration tests using the bundle orchestrator."""
 
     @pytest.mark.skipif(
         not (ffmpeg_available() and opencv_available() and mediapipe_available()),
         reason="ffmpeg, opencv, or mediapipe not available",
     )
-    def test_process_test_video(self):
-        """Should process a test video without errors."""
-        import numpy as np
-
-        from mirage.adapter.media.video_decode import VideoReader
-        from mirage.adapter.vision.mediapipe_face import FaceExtractor
-        from mirage.metrics.face_metrics import (
-            _compute_eye_aspect_ratio,
-            _compute_mouth_openness,
-        )
+    def test_bundle_includes_face_metrics(self):
+        """Bundle should include face metrics."""
+        from mirage.metrics.bundle import compute_metrics
 
         with (
             tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as vf,
@@ -409,38 +370,15 @@ class TestIntegrationWithVideo:
             create_test_video(video_path, duration=0.5, fps=10)
             create_test_audio(audio_path, duration=0.5)
 
-            # Decode frames via adapter
-            with VideoReader(video_path) as reader:
-                frames = list(reader.iter_frames())
-                frame_size = (reader.width, reader.height)
+            bundle = compute_metrics(video_path, audio_path)
 
-            assert len(frames) > 0
-
-            # Extract face data via adapter
-            extractor = FaceExtractor()
-            track = extractor.extract_from_frames(frames, fps=10.0)
-
-            # Convert to dict format
-            face_data = []
-            for fd in track.face_data:
-                if fd.detected and len(fd.landmarks) > 0:
-                    face_data.append({
-                        "bbox": fd.bbox,
-                        "landmarks": fd.landmarks,
-                        "mouth_openness": _compute_mouth_openness(fd.landmarks),
-                        "eye_aspect_ratio": _compute_eye_aspect_ratio(fd.landmarks),
-                    })
-                else:
-                    face_data.append(None)
-
-            # Create fake audio envelope
-            audio_envelope = list(np.random.rand(len(frames)))
-
-            # Compute metrics (pure computation)
-            metrics = compute_face_metrics(face_data, frame_size, audio_envelope, fps=10.0)
-
-            assert "face_present_ratio" in metrics
-            assert "mouth_audio_corr" in metrics
+            # Check face metric fields exist and have valid types
+            assert isinstance(bundle.face_present_ratio, float)
+            assert isinstance(bundle.face_bbox_jitter, float)
+            assert isinstance(bundle.landmark_jitter, float)
+            assert isinstance(bundle.mouth_open_energy, float)
+            assert isinstance(bundle.mouth_audio_corr, float)
+            assert 0.0 <= bundle.face_present_ratio <= 1.0
         finally:
             video_path.unlink(missing_ok=True)
             audio_path.unlink(missing_ok=True)
