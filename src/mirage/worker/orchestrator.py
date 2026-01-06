@@ -21,13 +21,8 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from mirage.db.schema import (
-    DatasetItem,
-    GenerationSpec,
-    MetricResult,
-    ProviderCall,
-    Run,
-)
+from mirage.db import repo
+from mirage.db.schema import MetricResult, ProviderCall, Run
 from mirage.models.types import GenerationInput
 from mirage.providers.mock import MockProvider
 
@@ -59,7 +54,7 @@ class WorkerOrchestrator:
         Returns:
             List of Run objects ready for processing.
         """
-        return self.session.query(Run).filter(Run.status == "queued").all()
+        return repo.get_queued_runs(self.session)
 
     def process_run(self, run: Run) -> None:
         """Process a single run through the pipeline.
@@ -79,7 +74,7 @@ class WorkerOrchestrator:
             # Step 1: Update status to running
             run.status = "running"
             run.started_at = datetime.now(timezone.utc)
-            self.session.commit()
+            repo.commit(self.session)
 
             # Step 2: Build GenerationInput
             gen_input = self._build_generation_input(run)
@@ -98,7 +93,7 @@ class WorkerOrchestrator:
             run.output_canon_uri = canon_artifact.canon_video_path
             run.output_sha256 = canon_artifact.sha256
             run.ended_at = datetime.now(timezone.utc)
-            self.session.commit()
+            repo.commit(self.session)
 
         except Exception as e:
             # Handle failure
@@ -106,7 +101,7 @@ class WorkerOrchestrator:
             run.error_code = type(e).__name__
             run.error_detail = str(e)
             run.ended_at = datetime.now(timezone.utc)
-            self.session.commit()
+            repo.commit(self.session)
 
     def _build_generation_input(self, run: Run) -> GenerationInput:
         """Build GenerationInput from database records.
@@ -120,27 +115,18 @@ class WorkerOrchestrator:
         Raises:
             ValueError: If required data is missing.
         """
-        # Get dataset item
-        item = self.session.query(DatasetItem).filter(DatasetItem.item_id == run.item_id).first()
+        # Get dataset item via repository
+        item = repo.get_dataset_item(self.session, run.item_id)
         if item is None:
             raise ValueError(f"DatasetItem not found: {run.item_id}")
 
-        # Get experiment and spec
-        from mirage.db.schema import Experiment
-
-        experiment = (
-            self.session.query(Experiment)
-            .filter(Experiment.experiment_id == run.experiment_id)
-            .first()
-        )
+        # Get experiment via repository
+        experiment = repo.get_experiment(self.session, run.experiment_id)
         if experiment is None:
             raise ValueError(f"Experiment not found: {run.experiment_id}")
 
-        spec = (
-            self.session.query(GenerationSpec)
-            .filter(GenerationSpec.generation_spec_id == experiment.generation_spec_id)
-            .first()
-        )
+        # Get generation spec via repository
+        spec = repo.get_generation_spec(self.session, experiment.generation_spec_id)
         if spec is None:
             raise ValueError(f"GenerationSpec not found: {experiment.generation_spec_id}")
 
@@ -199,14 +185,9 @@ class WorkerOrchestrator:
             spec_hash=run.spec_hash,
         )
 
-        # Check for existing provider call
-        existing_call = (
-            self.session.query(ProviderCall)
-            .filter(
-                ProviderCall.provider == gen_input.provider,
-                ProviderCall.provider_idempotency_key == idempotency_key,
-            )
-            .first()
+        # Check for existing provider call via repository
+        existing_call = repo.get_provider_call_by_idempotency_key(
+            self.session, gen_input.provider, idempotency_key
         )
 
         if existing_call and existing_call.status == "completed":
@@ -226,7 +207,7 @@ class WorkerOrchestrator:
                 latency_ms=existing_call.latency_ms,
             )
 
-        # Create provider call record
+        # Create provider call record via repository
         provider_call = ProviderCall(
             provider_call_id=str(uuid.uuid4()),
             run_id=run.run_id,
@@ -235,8 +216,8 @@ class WorkerOrchestrator:
             attempt=1,
             status="created",
         )
-        self.session.add(provider_call)
-        self.session.commit()
+        repo.create_provider_call(self.session, provider_call)
+        repo.commit(self.session)
 
         # Create output directory for run
         run_output_dir = self.output_dir / "runs" / run.run_id
@@ -255,13 +236,13 @@ class WorkerOrchestrator:
             provider_call.provider_job_id = raw_artifact.provider_job_id
             provider_call.cost_usd = raw_artifact.cost_usd
             provider_call.latency_ms = raw_artifact.latency_ms
-            self.session.commit()
+            repo.commit(self.session)
 
             return raw_artifact
 
         except Exception:
             provider_call.status = "failed"
-            self.session.commit()
+            repo.commit(self.session)
             raise
 
     def _normalize_video(self, run: Run, raw_artifact, gen_input: GenerationInput):
@@ -306,7 +287,7 @@ class WorkerOrchestrator:
             audio_path=Path(gen_input.input_audio_path),
         )
 
-        # Store metric result
+        # Store metric result via repository
         metric_result = MetricResult(
             metric_result_id=str(uuid.uuid4()),
             run_id=run.run_id,
@@ -315,7 +296,7 @@ class WorkerOrchestrator:
             value_json=metrics.model_dump_json(),
             status="computed",
         )
-        self.session.add(metric_result)
-        self.session.commit()
+        repo.create_metric_result(self.session, metric_result)
+        repo.commit(self.session)
 
         return metrics

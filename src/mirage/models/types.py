@@ -118,8 +118,8 @@ class RunDetail(BaseModel):
 class HumanSummary(BaseModel):
     """Summary of human evaluation results."""
 
-    win_rates: dict[str, float]  # variant_key -> win_rate
-    recommended_pick: str | None  # variant_key
+    win_rates: dict[str, float]  # run_id -> win_rate
+    recommended_pick: str | None  # run_id with highest win rate
     total_comparisons: int
 
 

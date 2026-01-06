@@ -11,13 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from mirage.api.app import get_db_session
-from mirage.db.schema import (
-    DatasetItem,
-    Experiment,
-    GenerationSpec,
-    MetricResult,
-    Run,
-)
+from mirage.db import repo
+from mirage.db.schema import Run
 from mirage.models.types import (
     DatasetItemDetail,
     ExperimentOverview,
@@ -27,30 +22,6 @@ from mirage.models.types import (
 )
 
 router = APIRouter()
-
-
-def _get_runs_for_experiment(
-    session: Session, experiment_id: str
-) -> tuple[list[Run], DatasetItem | None]:
-    """Get all runs and dataset item for an experiment.
-
-    Args:
-        session: Database session.
-        experiment_id: Experiment ID.
-
-    Returns:
-        Tuple of (runs list, dataset item or None).
-    """
-    runs = session.query(Run).filter(Run.experiment_id == experiment_id).all()
-
-    # Get dataset item from first run
-    dataset_item = None
-    if runs:
-        dataset_item = (
-            session.query(DatasetItem).filter(DatasetItem.item_id == runs[0].item_id).first()
-        )
-
-    return runs, dataset_item
 
 
 def _build_run_detail(session: Session, run: Run) -> RunDetail:
@@ -63,19 +34,12 @@ def _build_run_detail(session: Session, run: Run) -> RunDetail:
     Returns:
         RunDetail model.
     """
-    # Get metrics if available
+    # Get metrics if available via repository
     metrics = None
     status_badge = None
     reasons: list[str] = []
 
-    metric_result = (
-        session.query(MetricResult)
-        .filter(
-            MetricResult.run_id == run.run_id,
-            MetricResult.metric_name == "MetricBundleV1",
-        )
-        .first()
-    )
+    metric_result = repo.get_metric_result(session, run.run_id)
 
     if metric_result and metric_result.value_json:
         try:
@@ -118,24 +82,25 @@ def get_experiment(
     Raises:
         HTTPException: 404 if experiment not found.
     """
-    # Get experiment
-    experiment = session.query(Experiment).filter(Experiment.experiment_id == experiment_id).first()
+    # Get experiment via repository
+    experiment = repo.get_experiment(session, experiment_id)
 
     if experiment is None:
         raise HTTPException(status_code=404, detail="Experiment not found")
 
-    # Get generation spec
-    spec = (
-        session.query(GenerationSpec)
-        .filter(GenerationSpec.generation_spec_id == experiment.generation_spec_id)
-        .first()
-    )
+    # Get generation spec via repository
+    spec = repo.get_generation_spec(session, experiment.generation_spec_id)
 
     if spec is None:
         raise HTTPException(status_code=404, detail="Generation spec not found")
 
-    # Get runs and dataset item
-    runs, dataset_item = _get_runs_for_experiment(session, experiment_id)
+    # Get runs via repository
+    runs = repo.get_runs_for_experiment(session, experiment_id)
+
+    # Get dataset item from first run via repository
+    dataset_item = None
+    if runs:
+        dataset_item = repo.get_dataset_item(session, runs[0].item_id)
 
     if dataset_item is None and runs:
         raise HTTPException(status_code=404, detail="Dataset item not found")

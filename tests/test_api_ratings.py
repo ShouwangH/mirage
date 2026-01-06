@@ -338,10 +338,11 @@ class TestHumanSummaryEndpoint:
         response = client.get(f"/api/experiments/{experiment_id}/summary")
         data = response.json()
 
-        # Left (variant-a) should have higher win rate
+        # Left (run-001) should have higher win rate
+        # win_rates are now keyed by run_id, not variant_key
         assert data["total_comparisons"] == 1
-        assert "variant-a" in data["win_rates"]
-        assert "variant-b" in data["win_rates"]
+        assert "run-001" in data["win_rates"]
+        assert "run-002" in data["win_rates"]
 
     def test_returns_null_for_no_ratings(self):
         """Returns null summary when no ratings exist."""

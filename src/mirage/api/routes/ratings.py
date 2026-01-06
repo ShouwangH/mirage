@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 
 from mirage.aggregation.summary import summarize_experiment
 from mirage.api.app import get_db_session
-from mirage.db.schema import Experiment, HumanTask
-from mirage.eval.ratings import submit_rating
+from mirage.db import repo
+from mirage.eval.ratings import RatingInput, submit_rating
 from mirage.models.types import HumanSummary, RatingSubmission
 
 router = APIRouter()
@@ -43,28 +43,30 @@ def create_rating(
     Raises:
         HTTPException: 404 if task not found.
     """
-    # Verify task exists
-    task = session.query(HumanTask).filter(HumanTask.task_id == rating.task_id).first()
+    # Verify task exists via repository
+    task = repo.get_task(session, rating.task_id)
 
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    # Build typed input for domain layer
+    rating_input = RatingInput(
+        task_id=rating.task_id,
+        rater_id=rating.rater_id,
+        choice_realism=rating.choice_realism,
+        choice_lipsync=rating.choice_lipsync,
+        choice_targetmatch=rating.choice_targetmatch,
+        notes=rating.notes,
+    )
+
     try:
-        rating_record = submit_rating(
-            session=session,
-            task_id=rating.task_id,
-            rater_id=rating.rater_id,
-            choice_realism=rating.choice_realism,
-            choice_lipsync=rating.choice_lipsync,
-            choice_targetmatch=rating.choice_targetmatch,
-            notes=rating.notes,
-        )
+        result = submit_rating(session=session, rating_input=rating_input)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
     return RatingCreatedResponse(
-        rating_id=rating_record.rating_id,
-        task_id=rating_record.task_id,
+        rating_id=result.rating_id,
+        task_id=result.task_id,
     )
 
 
@@ -85,8 +87,8 @@ def get_experiment_summary(
     Raises:
         HTTPException: 404 if experiment not found.
     """
-    # Verify experiment exists
-    experiment = session.query(Experiment).filter(Experiment.experiment_id == experiment_id).first()
+    # Verify experiment exists via repository
+    experiment = repo.get_experiment(session, experiment_id)
 
     if experiment is None:
         raise HTTPException(status_code=404, detail="Experiment not found")

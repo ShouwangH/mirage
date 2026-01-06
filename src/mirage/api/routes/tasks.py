@@ -12,7 +12,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from mirage.api.app import get_db_session
-from mirage.db.schema import Experiment, HumanTask
+from mirage.db import repo
+from mirage.db.schema import HumanTask
 from mirage.eval.tasks import generate_pairwise_tasks, get_next_open_task
 from mirage.models.types import TaskDetail
 
@@ -61,17 +62,17 @@ def create_tasks(
     Raises:
         HTTPException: 404 if experiment not found.
     """
-    # Verify experiment exists
-    experiment = session.query(Experiment).filter(Experiment.experiment_id == experiment_id).first()
+    # Verify experiment exists via repository
+    experiment = repo.get_experiment(session, experiment_id)
 
     if experiment is None:
         raise HTTPException(status_code=404, detail="Experiment not found")
 
-    # Generate tasks
-    tasks = generate_pairwise_tasks(session, experiment_id)
+    # Generate tasks - returns TaskCreationResult
+    result = generate_pairwise_tasks(session, experiment_id)
 
     return TasksCreatedResponse(
-        tasks_created=len(tasks),
+        tasks_created=result.created_count,
         experiment_id=experiment_id,
     )
 
@@ -93,7 +94,8 @@ def get_task(
     Raises:
         HTTPException: 404 if task not found.
     """
-    task = session.query(HumanTask).filter(HumanTask.task_id == task_id).first()
+    # Get task via repository
+    task = repo.get_task(session, task_id)
 
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
