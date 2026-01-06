@@ -1,89 +1,49 @@
-"""MetricBundleV1 assembly from tier0 + tier1 + status.
+"""MetricBundleV1 assembly from video_quality + face_metrics + status.
 
-This module provides the main compute_metrics entry point that:
-1. Computes Tier 0 metrics (ffmpeg/opencv/numpy)
-2. Computes Tier 1 metrics (mediapipe)
+This module is the thin orchestrator that:
+1. Calls adapters for IO (video decoding, face detection, audio extraction)
+2. Passes domain objects to pure metric functions
 3. Derives status badge from metrics
 4. Returns a complete MetricBundleV1
 
-Per METRICS.md, Tier 2 (SyncNet) is optional and set to null until PR17.
+Per METRICS.md, SyncNet metrics are optional and set to null until PR17.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from mirage.metrics.status import compute_status_badge
-from mirage.metrics.tier0 import compute_tier0_metrics, decode_video
-from mirage.metrics.tier1 import compute_tier1_metrics
+from mirage.adapter.media import extract_rms_envelope, probe_audio, probe_video
+from mirage.adapter.media.video_decode import Frame, VideoReader
+from mirage.adapter.vision.mediapipe_face import FaceExtractor, FaceTrack
+from mirage.metrics.face_metrics import FaceMetrics, compute_face_metrics
+from mirage.metrics.status import StatusResult, compute_status_badge
+from mirage.metrics.video_quality import VideoQualityMetrics, compute_video_quality
 from mirage.models.types import MetricBundleV1
 
+# Module-level face extractor for reuse (avoids reinit overhead)
+_face_extractor: FaceExtractor | None = None
 
-def _extract_audio_envelope(audio_path: Path, num_frames: int, fps: float) -> list:
-    """Extract audio RMS envelope per frame.
 
-    Args:
-        audio_path: Path to audio file.
-        num_frames: Number of video frames.
-        fps: Video frames per second.
+def _get_face_extractor() -> FaceExtractor:
+    """Get or create the shared FaceExtractor instance."""
+    global _face_extractor
+    if _face_extractor is None:
+        _face_extractor = FaceExtractor()
+    return _face_extractor
 
-    Returns:
-        List of RMS values per frame window.
-    """
-    if num_frames == 0 or fps <= 0:
-        return []
 
-    try:
-        import subprocess
-
-        import numpy as np
-
-        # Extract raw audio using ffmpeg
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-i",
-                str(audio_path),
-                "-f",
-                "f32le",
-                "-acodec",
-                "pcm_f32le",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "-",
-            ],
-            capture_output=True,
-            timeout=30,
-        )
-
-        if result.returncode != 0:
-            return [0.0] * num_frames
-
-        audio_data = np.frombuffer(result.stdout, dtype=np.float32)
-        if len(audio_data) == 0:
-            return [0.0] * num_frames
-
-        # Compute RMS per frame window
-        samples_per_frame = int(16000 / fps)
-        envelope = []
-
-        for i in range(num_frames):
-            start = i * samples_per_frame
-            end = start + samples_per_frame
-
-            if start >= len(audio_data):
-                envelope.append(0.0)
-            else:
-                chunk = audio_data[start:end]
-                rms = float(np.sqrt(np.mean(chunk**2))) if len(chunk) > 0 else 0.0
-                envelope.append(rms)
-
-        return envelope
-
-    except (ImportError, subprocess.TimeoutExpired, Exception):
-        return [0.0] * num_frames
+def _default_face_metrics() -> FaceMetrics:
+    """Return default face metrics for failed decode."""
+    return FaceMetrics(
+        face_present_ratio=0.0,
+        face_bbox_jitter=0.0,
+        landmark_jitter=0.0,
+        mouth_open_energy=0.0,
+        mouth_audio_corr=0.0,
+        blink_count=None,
+        blink_rate_hz=None,
+    )
 
 
 def compute_metrics(video_path: Path, audio_path: Path) -> MetricBundleV1:
@@ -92,6 +52,9 @@ def compute_metrics(video_path: Path, audio_path: Path) -> MetricBundleV1:
     This is the main entry point per IMPLEMENTATION_PLAN.md interface spec:
         def compute_metrics(canon_path: Path, audio_path: Path) -> MetricBundleV1
 
+    Orchestrates adapters for IO, passes domain types to pure metric functions.
+    Video is decoded once and reused for both video quality and face metrics.
+
     Args:
         video_path: Path to canonical video file.
         audio_path: Path to canonical audio file.
@@ -99,68 +62,102 @@ def compute_metrics(video_path: Path, audio_path: Path) -> MetricBundleV1:
     Returns:
         Complete MetricBundleV1 with all metrics and status.
     """
-    # Compute Tier 0 metrics
-    tier0 = compute_tier0_metrics(video_path, audio_path)
+    # Step 1: Probe A/V metadata via adapters
+    video_duration_ms = 0
+    audio_duration_ms = 0
+    fps = 0.0
 
-    # Decode video for Tier 1 (if decode successful)
-    if tier0["decode_ok"]:
-        frames = decode_video(video_path)
-        fps = tier0["fps"]
+    try:
+        video_info = probe_video(video_path)
+        video_duration_ms = video_info.duration_ms
+        fps = video_info.fps
+    except (FileNotFoundError, RuntimeError):
+        pass
 
-        # Extract audio envelope for mouth-audio correlation
-        audio_envelope = _extract_audio_envelope(audio_path, len(frames), fps)
+    if audio_path.exists():
+        try:
+            audio_info = probe_audio(audio_path)
+            audio_duration_ms = audio_info.duration_ms
+        except (FileNotFoundError, RuntimeError):
+            pass
 
-        # Compute Tier 1 metrics
-        tier1 = compute_tier1_metrics(frames, audio_envelope, fps)
-    else:
-        # Failed decode - use default Tier 1 values
-        tier1 = {
-            "face_present_ratio": 0.0,
-            "face_bbox_jitter": 0.0,
-            "landmark_jitter": 0.0,
-            "mouth_open_energy": 0.0,
-            "mouth_audio_corr": 0.0,
-            "blink_count": None,
-            "blink_rate_hz": None,
-        }
+    # Step 2: Decode video frames (once, reuse for all metrics)
+    frames: list[Frame] = []
+    frame_size: tuple[int, int] = (320, 240)  # Default
 
-    # Compute status badge
-    status_result = compute_status_badge(
-        decode_ok=tier0["decode_ok"],
-        face_present_ratio=tier1["face_present_ratio"],
-        av_duration_delta_ms=tier0["av_duration_delta_ms"],
-        flicker_score=tier0["flicker_score"],
-        freeze_frame_ratio=tier0["freeze_frame_ratio"],
-        blur_score=tier0["blur_score"],
-        mouth_audio_corr=tier1["mouth_audio_corr"],
+    try:
+        with VideoReader(video_path) as reader:
+            frames = list(reader.iter_frames())
+            if reader.width > 0 and reader.height > 0:
+                frame_size = (reader.width, reader.height)
+    except (FileNotFoundError, RuntimeError):
+        pass
+
+    # Extract BGR arrays for video quality metrics
+    bgr_frames = [f.bgr for f in frames]
+
+    # Step 3: Compute video quality metrics (pure computation)
+    video_quality: VideoQualityMetrics = compute_video_quality(
+        frames=bgr_frames,
+        video_duration_ms=video_duration_ms,
+        audio_duration_ms=audio_duration_ms,
+        fps=fps,
     )
 
-    # Assemble MetricBundleV1
+    # Step 4: Compute face metrics (if decode successful)
+    if video_quality.decode_ok and len(frames) > 0:
+        # Extract face data via adapter (returns FaceTrack domain object)
+        extractor = _get_face_extractor()
+        face_track: FaceTrack = extractor.extract_from_frames(frames, fps=fps)
+
+        # Extract audio envelope via adapter
+        try:
+            audio_envelope = extract_rms_envelope(audio_path, fps=fps, num_frames=len(frames))
+        except (FileNotFoundError, Exception):
+            audio_envelope = [0.0] * len(frames)
+
+        # Compute face metrics (pure computation on domain objects)
+        face_metrics: FaceMetrics = compute_face_metrics(face_track, frame_size, audio_envelope)
+    else:
+        face_metrics = _default_face_metrics()
+
+    # Step 5: Compute status badge
+    status: StatusResult = compute_status_badge(
+        decode_ok=video_quality.decode_ok,
+        face_present_ratio=face_metrics.face_present_ratio,
+        av_duration_delta_ms=video_quality.av_duration_delta_ms,
+        flicker_score=video_quality.flicker_score,
+        freeze_frame_ratio=video_quality.freeze_frame_ratio,
+        blur_score=video_quality.blur_score,
+        mouth_audio_corr=face_metrics.mouth_audio_corr,
+    )
+
+    # Step 6: Assemble MetricBundleV1
     return MetricBundleV1(
-        # Tier 0
-        decode_ok=tier0["decode_ok"],
-        video_duration_ms=tier0["video_duration_ms"],
-        audio_duration_ms=tier0["audio_duration_ms"],
-        av_duration_delta_ms=tier0["av_duration_delta_ms"],
-        fps=tier0["fps"],
-        frame_count=tier0["frame_count"],
-        scene_cut_count=tier0["scene_cut_count"],
-        freeze_frame_ratio=tier0["freeze_frame_ratio"],
-        flicker_score=tier0["flicker_score"],
-        blur_score=tier0["blur_score"],
-        frame_diff_spike_count=tier0["frame_diff_spike_count"],
-        # Tier 1
-        face_present_ratio=tier1["face_present_ratio"],
-        face_bbox_jitter=tier1["face_bbox_jitter"],
-        landmark_jitter=tier1["landmark_jitter"],
-        mouth_open_energy=tier1["mouth_open_energy"],
-        mouth_audio_corr=tier1["mouth_audio_corr"],
-        blink_count=tier1["blink_count"],
-        blink_rate_hz=tier1["blink_rate_hz"],
-        # Tier 2 (optional, null until SyncNet PR17)
+        # Video quality metrics
+        decode_ok=video_quality.decode_ok,
+        video_duration_ms=video_quality.video_duration_ms,
+        audio_duration_ms=video_quality.audio_duration_ms,
+        av_duration_delta_ms=video_quality.av_duration_delta_ms,
+        fps=video_quality.fps,
+        frame_count=video_quality.frame_count,
+        scene_cut_count=video_quality.scene_cut_count,
+        freeze_frame_ratio=video_quality.freeze_frame_ratio,
+        flicker_score=video_quality.flicker_score,
+        blur_score=video_quality.blur_score,
+        frame_diff_spike_count=video_quality.frame_diff_spike_count,
+        # Face metrics
+        face_present_ratio=face_metrics.face_present_ratio,
+        face_bbox_jitter=face_metrics.face_bbox_jitter,
+        landmark_jitter=face_metrics.landmark_jitter,
+        mouth_open_energy=face_metrics.mouth_open_energy,
+        mouth_audio_corr=face_metrics.mouth_audio_corr,
+        blink_count=face_metrics.blink_count,
+        blink_rate_hz=face_metrics.blink_rate_hz,
+        # SyncNet metrics (optional, null until PR17)
         lse_d=None,
         lse_c=None,
         # Status
-        status_badge=status_result["badge"],
-        reasons=status_result["reasons"],
+        status_badge=status.badge,
+        reasons=status.reasons,
     )

@@ -152,9 +152,38 @@ for each task, respond with:
 
 ---
 
-## 9. project-specific notes (this repo)
+## 9. naming conventions (mandatory)
+
+names must be self-documenting. avoid arbitrary labels like "tier0", "v1", "update1".
+
+### file and module naming
+- name files for what they contain, not implementation details
+- directories should reflect domain boundaries (api, metrics, eval, providers)
+- prefer domain-specific names over tool-specific names
+
+### function naming
+- functions describe what they do, not how
+- avoid generic names like `process()`, `handle()`, `do_thing()`
+
+### renaming procedure
+when encountering poor names:
+1. identify 3-5 potential names
+2. choose the one that best describes the domain and function
+3. rename consistently across codebase
+
+### examples
+| bad name | good name | reason |
+|----------|-----------|--------|
+| tier0.py | video_quality.py | describes what metrics measure |
+| tier1.py | face_metrics.py | describes the domain |
+| process_data() | normalize_video() | describes the action |
+| v2_handler | rating_submission | describes the feature |
+
+---
+
+## 10. project-specific notes (this repo)
 
 - this is an eval loop demo, not a general platform
 - do not add uploads/auth/multi-provider routing unless explicitly requested
-- do not implement auto-prompt rewriting or “agentic auto-fixes”
+- do not implement auto-prompt rewriting or "agentic auto-fixes"
 - suggested next actions are advisory only

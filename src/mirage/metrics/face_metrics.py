@@ -1,4 +1,4 @@
-"""Tier 1 metrics using mediapipe.
+"""Face metrics - pure computations on FaceTrack data.
 
 Metrics from METRICS.md:
 - face_present_ratio: % frames with detected face
@@ -7,13 +7,21 @@ Metrics from METRICS.md:
 - mouth_open_energy: variance of mouth openness
 - mouth_audio_corr: correlation between mouth and audio envelope
 - blink_count, blink_rate_hz: blink detection via eye aspect ratio
+
+This module contains ONLY pure computations on domain data.
+Face detection is handled by adapter/vision/mediapipe_face.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-# Mediapipe face mesh landmark indices
+if TYPE_CHECKING:
+    from mirage.adapter.vision.mediapipe_face import FaceTrack
+
+# Landmark indices for derived computations
 # Upper lip: 13, Lower lip: 14 (simplified)
 UPPER_LIP_IDX = 13
 LOWER_LIP_IDX = 14
@@ -29,78 +37,23 @@ EAR_THRESHOLD = 0.2  # Below this = blink
 BLINK_CONSEC_FRAMES = 2  # Minimum frames for a blink
 
 
-def extract_face_data(frames: list) -> list:
-    """Extract face detection data from frames using mediapipe.
+@dataclass
+class FaceMetrics:
+    """Result of face metric computation.
 
-    Args:
-        frames: List of numpy array frames (BGR).
-
-    Returns:
-        List of face data dicts (or None if no face detected).
-        Each dict contains: bbox, landmarks, mouth_openness, eye_aspect_ratio.
+    All metrics are computed from FaceTrack domain data.
     """
-    if len(frames) == 0:
-        return []
 
-    try:
-        import cv2
-        import mediapipe as mp
-
-        # Check if mediapipe has the expected API
-        if not hasattr(mp, "solutions") or not hasattr(mp.solutions, "face_mesh"):
-            return [None] * len(frames)
-    except (ImportError, AttributeError):
-        return [None] * len(frames)
-
-    mp_face_mesh = mp.solutions.face_mesh
-    face_mesh = mp_face_mesh.FaceMesh(
-        static_image_mode=False,
-        max_num_faces=1,
-        refine_landmarks=True,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
-
-    results = []
-    for frame in frames:
-        # Convert BGR to RGB for mediapipe
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = face_mesh.process(rgb_frame)
-
-        if result.multi_face_landmarks and len(result.multi_face_landmarks) > 0:
-            landmarks = result.multi_face_landmarks[0].landmark
-            h, w = frame.shape[:2]
-
-            # Extract normalized landmarks
-            lm_list = [[lm.x, lm.y] for lm in landmarks]
-
-            # Compute bounding box from landmarks
-            xs = [lm.x * w for lm in landmarks]
-            ys = [lm.y * h for lm in landmarks]
-            bbox = [min(xs), min(ys), max(xs), max(ys)]
-
-            # Compute mouth openness (distance between upper and lower lip)
-            mouth_openness = _compute_mouth_openness(lm_list)
-
-            # Compute eye aspect ratio for blink detection
-            ear = _compute_eye_aspect_ratio(lm_list)
-
-            results.append(
-                {
-                    "bbox": bbox,
-                    "landmarks": lm_list,
-                    "mouth_openness": mouth_openness,
-                    "eye_aspect_ratio": ear,
-                }
-            )
-        else:
-            results.append(None)
-
-    face_mesh.close()
-    return results
+    face_present_ratio: float
+    face_bbox_jitter: float
+    landmark_jitter: float
+    mouth_open_energy: float
+    mouth_audio_corr: float
+    blink_count: int | None
+    blink_rate_hz: float | None
 
 
-def _compute_mouth_openness(landmarks: list) -> float:
+def _compute_mouth_openness(landmarks: list[list[float]]) -> float:
     """Compute mouth openness from landmarks.
 
     Args:
@@ -118,7 +71,7 @@ def _compute_mouth_openness(landmarks: list) -> float:
     return math.sqrt((upper[0] - lower[0]) ** 2 + (upper[1] - lower[1]) ** 2)
 
 
-def _compute_eye_aspect_ratio(landmarks: list) -> float:
+def _compute_eye_aspect_ratio(landmarks: list[list[float]]) -> float:
     """Compute eye aspect ratio for blink detection.
 
     Args:
@@ -130,7 +83,7 @@ def _compute_eye_aspect_ratio(landmarks: list) -> float:
     if len(landmarks) < max(max(LEFT_EYE_INDICES), max(RIGHT_EYE_INDICES)) + 1:
         return 0.3  # Default open eye
 
-    def ear_for_eye(indices):
+    def ear_for_eye(indices: list[int]) -> float:
         # Simplified EAR: vertical distance / horizontal distance
         p1 = landmarks[indices[1]]
         p2 = landmarks[indices[5]]
@@ -157,47 +110,47 @@ def _compute_eye_aspect_ratio(landmarks: list) -> float:
     return (left_ear + right_ear) / 2.0
 
 
-def compute_face_present_ratio(face_data: list) -> float:
+def _compute_face_present_ratio(face_track: "FaceTrack") -> float:
     """Compute ratio of frames with detected face.
 
     Args:
-        face_data: List of face data dicts (None if no face).
+        face_track: FaceTrack with detection results.
 
     Returns:
         Ratio in [0, 1].
     """
-    if len(face_data) == 0:
+    if face_track.frame_count == 0:
         return 0.0
 
-    face_count = sum(1 for f in face_data if f is not None)
-    return face_count / len(face_data)
+    face_count = sum(1 for fd in face_track.face_data if fd.detected)
+    return face_count / face_track.frame_count
 
 
-def compute_face_bbox_jitter(face_data: list, frame_size: tuple) -> float:
+def _compute_face_bbox_jitter(face_track: "FaceTrack", frame_size: tuple[int, int]) -> float:
     """Compute bounding box jitter (normalized by frame size).
 
     Args:
-        face_data: List of face data dicts.
+        face_track: FaceTrack with detection results.
         frame_size: (width, height) of frames.
 
     Returns:
         Average normalized bbox movement between frames.
     """
-    if len(face_data) < 2:
+    if face_track.frame_count < 2:
         return 0.0
 
     w, h = frame_size
     norm_factor = math.sqrt(w * w + h * h)
 
     movements = []
-    prev_bbox = None
+    prev_bbox: list[float] | None = None
 
-    for fd in face_data:
-        if fd is None:
+    for fd in face_track.face_data:
+        if not fd.detected or len(fd.bbox) < 4:
             prev_bbox = None
             continue
 
-        bbox = fd["bbox"]
+        bbox = fd.bbox
         if prev_bbox is not None:
             # Compute center movement
             cx1 = (prev_bbox[0] + prev_bbox[2]) / 2
@@ -224,29 +177,29 @@ def compute_face_bbox_jitter(face_data: list, frame_size: tuple) -> float:
     return sum(movements) / len(movements)
 
 
-def compute_landmark_jitter(face_data: list) -> float:
+def _compute_landmark_jitter(face_track: "FaceTrack") -> float:
     """Compute landmark jitter (normalized by inter-ocular distance).
 
     Args:
-        face_data: List of face data dicts.
+        face_track: FaceTrack with detection results.
 
     Returns:
         Average normalized landmark movement.
     """
-    if len(face_data) < 2:
+    if face_track.frame_count < 2:
         return 0.0
 
     movements = []
-    prev_landmarks = None
-    prev_iod = None
+    prev_landmarks: list[list[float]] | None = None
+    prev_iod: float | None = None
 
-    for fd in face_data:
-        if fd is None or len(fd.get("landmarks", [])) == 0:
+    for fd in face_track.face_data:
+        if not fd.detected or len(fd.landmarks) == 0:
             prev_landmarks = None
             prev_iod = None
             continue
 
-        landmarks = fd["landmarks"]
+        landmarks = fd.landmarks
 
         # Compute inter-ocular distance for normalization
         if len(landmarks) > max(LEFT_EYE_CENTER, RIGHT_EYE_CENTER):
@@ -278,19 +231,20 @@ def compute_landmark_jitter(face_data: list) -> float:
     return sum(movements) / len(movements)
 
 
-def compute_mouth_open_energy(face_data: list) -> float:
+def _compute_mouth_open_energy(face_track: "FaceTrack") -> float:
     """Compute variance of mouth openness over time.
 
     Args:
-        face_data: List of face data dicts.
+        face_track: FaceTrack with detection results.
 
     Returns:
         Variance of mouth openness (higher = more movement).
     """
     openness_values = []
-    for fd in face_data:
-        if fd is not None and "mouth_openness" in fd:
-            openness_values.append(fd["mouth_openness"])
+    for fd in face_track.face_data:
+        if fd.detected and len(fd.landmarks) > 0:
+            openness = _compute_mouth_openness(fd.landmarks)
+            openness_values.append(openness)
 
     if len(openness_values) < 2:
         return 0.0
@@ -301,11 +255,11 @@ def compute_mouth_open_energy(face_data: list) -> float:
     return variance
 
 
-def compute_mouth_audio_corr(face_data: list, audio_envelope: object) -> float:
+def _compute_mouth_audio_corr(face_track: "FaceTrack", audio_envelope: list[float]) -> float:
     """Compute correlation between mouth openness and audio envelope.
 
     Args:
-        face_data: List of face data dicts.
+        face_track: FaceTrack with detection results.
         audio_envelope: Audio RMS envelope per frame.
 
     Returns:
@@ -316,14 +270,14 @@ def compute_mouth_audio_corr(face_data: list, audio_envelope: object) -> float:
     except ImportError:
         return 0.0
 
-    if len(face_data) == 0 or len(audio_envelope) == 0:
+    if face_track.frame_count == 0 or len(audio_envelope) == 0:
         return 0.0
 
     # Extract mouth openness values
     mouth_values = []
-    for fd in face_data:
-        if fd is not None and "mouth_openness" in fd:
-            mouth_values.append(fd["mouth_openness"])
+    for fd in face_track.face_data:
+        if fd.detected and len(fd.landmarks) > 0:
+            mouth_values.append(_compute_mouth_openness(fd.landmarks))
         else:
             mouth_values.append(0.0)
 
@@ -353,24 +307,23 @@ def compute_mouth_audio_corr(face_data: list, audio_envelope: object) -> float:
     return float(corr)
 
 
-def compute_blink_metrics(face_data: list, fps: float) -> tuple[int, float]:
+def _compute_blink_metrics(face_track: "FaceTrack") -> tuple[int | None, float | None]:
     """Detect blinks using eye aspect ratio.
 
     Args:
-        face_data: List of face data dicts.
-        fps: Frames per second.
+        face_track: FaceTrack with detection results.
 
     Returns:
-        Tuple of (blink_count, blink_rate_hz).
+        Tuple of (blink_count, blink_rate_hz), or (None, None) if insufficient data.
     """
-    if len(face_data) == 0 or fps <= 0:
-        return 0, 0.0
+    if face_track.frame_count == 0 or face_track.fps <= 0:
+        return None, None
 
     # Extract EAR values
     ear_values = []
-    for fd in face_data:
-        if fd is not None and "eye_aspect_ratio" in fd:
-            ear_values.append(fd["eye_aspect_ratio"])
+    for fd in face_track.face_data:
+        if fd.detected and len(fd.landmarks) > 0:
+            ear_values.append(_compute_eye_aspect_ratio(fd.landmarks))
         else:
             ear_values.append(0.3)  # Default open
 
@@ -391,7 +344,7 @@ def compute_blink_metrics(face_data: list, fps: float) -> tuple[int, float]:
         blink_count += 1
 
     # Compute rate
-    duration_sec = len(face_data) / fps
+    duration_sec = face_track.frame_count / face_track.fps
     if duration_sec > 0:
         blink_rate = blink_count / duration_sec
     else:
@@ -400,46 +353,37 @@ def compute_blink_metrics(face_data: list, fps: float) -> tuple[int, float]:
     return blink_count, blink_rate
 
 
-def compute_tier1_metrics(
-    frames: list,
-    audio_envelope: object,
-    fps: float,
-) -> dict:
-    """Compute all Tier 1 metrics.
+def compute_face_metrics(
+    face_track: "FaceTrack",
+    frame_size: tuple[int, int],
+    audio_envelope: list[float],
+) -> FaceMetrics:
+    """Compute all face metrics from FaceTrack.
+
+    This is a pure computation function - face detection is done by
+    adapter/vision/mediapipe_face and passed in as FaceTrack.
 
     Args:
-        frames: List of numpy array frames (BGR).
-        audio_envelope: Audio RMS envelope per frame.
-        fps: Frames per second.
+        face_track: FaceTrack from FaceExtractor with detection results.
+        frame_size: (width, height) of video frames for normalization.
+        audio_envelope: Audio RMS envelope per frame from audio adapter.
 
     Returns:
-        Dict with all Tier 1 metric fields.
+        FaceMetrics with all computed values.
     """
-    # Extract face data
-    face_data = extract_face_data(frames)
+    face_present_ratio = _compute_face_present_ratio(face_track)
+    face_bbox_jitter = _compute_face_bbox_jitter(face_track, frame_size)
+    landmark_jitter = _compute_landmark_jitter(face_track)
+    mouth_open_energy = _compute_mouth_open_energy(face_track)
+    mouth_audio_corr = _compute_mouth_audio_corr(face_track, audio_envelope)
+    blink_count, blink_rate_hz = _compute_blink_metrics(face_track)
 
-    # Compute metrics
-    face_present_ratio = compute_face_present_ratio(face_data)
-
-    # Get frame size for bbox jitter normalization
-    if len(frames) > 0:
-        h, w = frames[0].shape[:2]
-        frame_size = (w, h)
-    else:
-        frame_size = (320, 240)
-
-    face_bbox_jitter = compute_face_bbox_jitter(face_data, frame_size)
-    landmark_jitter = compute_landmark_jitter(face_data)
-    mouth_open_energy = compute_mouth_open_energy(face_data)
-    mouth_audio_corr = compute_mouth_audio_corr(face_data, audio_envelope)
-    blink_count, blink_rate_hz = compute_blink_metrics(face_data, fps)
-
-    return {
-        "face_present_ratio": face_present_ratio,
-        "face_bbox_jitter": face_bbox_jitter,
-        "landmark_jitter": landmark_jitter,
-        "mouth_open_energy": mouth_open_energy,
-        "mouth_audio_corr": mouth_audio_corr,
-        "blink_count": blink_count,
-        "blink_rate_hz": blink_rate_hz,
-    }
+    return FaceMetrics(
+        face_present_ratio=face_present_ratio,
+        face_bbox_jitter=face_bbox_jitter,
+        landmark_jitter=landmark_jitter,
+        mouth_open_energy=mouth_open_energy,
+        mouth_audio_corr=mouth_audio_corr,
+        blink_count=blink_count,
+        blink_rate_hz=blink_rate_hz,
+    )

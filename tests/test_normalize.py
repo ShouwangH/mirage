@@ -14,12 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from mirage.normalize.ffmpeg import (
-    check_ffmpeg_available,
-    get_audio_duration_ms,
-    get_video_info,
-    normalize_video,
-)
+from mirage.adapter.media import probe_audio, probe_video
+from mirage.normalize.video import check_tools_available, normalize_video
 
 
 def ffmpeg_available() -> bool:
@@ -36,27 +32,25 @@ def ffmpeg_available() -> bool:
         return False
 
 
-class TestCheckFfmpegAvailable:
-    """Tests for ffmpeg availability check."""
+class TestCheckToolsAvailable:
+    """Tests for tools availability check."""
 
     def test_returns_bool(self):
         """Should return a boolean."""
-        result = check_ffmpeg_available()
+        result = check_tools_available()
         assert isinstance(result, bool)
 
 
-class TestGetVideoInfo:
-    """Tests for video info extraction."""
+class TestProbeVideo:
+    """Tests for video probing via adapter."""
 
     @pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg not available")
-    def test_returns_dict_with_required_keys(self):
-        """Should return dict with duration_ms, fps, width, height."""
-        # Create a minimal test video using ffmpeg
+    def test_returns_video_info_with_required_fields(self):
+        """Should return VideoInfo with duration_ms, fps, width, height."""
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
             test_video = Path(f.name)
 
         try:
-            # Generate 1 second test video
             subprocess.run(
                 [
                     "ffmpeg",
@@ -75,34 +69,33 @@ class TestGetVideoInfo:
                 timeout=30,
             )
 
-            info = get_video_info(test_video)
+            info = probe_video(test_video)
 
-            assert "duration_ms" in info
-            assert "fps" in info
-            assert "width" in info
-            assert "height" in info
-            assert isinstance(info["duration_ms"], int)
-            assert isinstance(info["fps"], float)
+            assert hasattr(info, "duration_ms")
+            assert hasattr(info, "fps")
+            assert hasattr(info, "width")
+            assert hasattr(info, "height")
+            assert isinstance(info.duration_ms, int)
+            assert isinstance(info.fps, float)
         finally:
             test_video.unlink(missing_ok=True)
 
     def test_raises_on_nonexistent_file(self):
         """Should raise FileNotFoundError for missing file."""
         with pytest.raises(FileNotFoundError):
-            get_video_info(Path("/nonexistent/video.mp4"))
+            probe_video(Path("/nonexistent/video.mp4"))
 
 
-class TestGetAudioDurationMs:
-    """Tests for audio duration extraction."""
+class TestProbeAudio:
+    """Tests for audio probing via adapter."""
 
     @pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg not available")
-    def test_returns_int_duration(self):
-        """Should return integer milliseconds."""
+    def test_returns_audio_info_with_duration(self):
+        """Should return AudioInfo with duration_ms."""
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             test_audio = Path(f.name)
 
         try:
-            # Generate 2 second test audio
             subprocess.run(
                 [
                     "ffmpeg",
@@ -117,17 +110,18 @@ class TestGetAudioDurationMs:
                 timeout=30,
             )
 
-            duration = get_audio_duration_ms(test_audio)
+            info = probe_audio(test_audio)
 
-            assert isinstance(duration, int)
-            assert 1900 <= duration <= 2100  # ~2 seconds with tolerance
+            assert hasattr(info, "duration_ms")
+            assert isinstance(info.duration_ms, int)
+            assert 1900 <= info.duration_ms <= 2100  # ~2 seconds
         finally:
             test_audio.unlink(missing_ok=True)
 
     def test_raises_on_nonexistent_file(self):
         """Should raise FileNotFoundError for missing file."""
         with pytest.raises(FileNotFoundError):
-            get_audio_duration_ms(Path("/nonexistent/audio.wav"))
+            probe_audio(Path("/nonexistent/audio.wav"))
 
 
 class TestNormalizeVideo:
@@ -146,7 +140,6 @@ class TestNormalizeVideo:
             output_path = Path(of.name)
 
         try:
-            # Generate test video (3 seconds)
             subprocess.run(
                 [
                     "ffmpeg",
@@ -165,7 +158,6 @@ class TestNormalizeVideo:
                 timeout=30,
             )
 
-            # Generate test audio (2 seconds)
             subprocess.run(
                 [
                     "ffmpeg",
@@ -205,7 +197,6 @@ class TestNormalizeVideo:
             output_path = Path(of.name)
 
         try:
-            # Generate test video (5 seconds)
             subprocess.run(
                 [
                     "ffmpeg",
@@ -224,7 +215,6 @@ class TestNormalizeVideo:
                 timeout=30,
             )
 
-            # Generate test audio (2 seconds)
             subprocess.run(
                 [
                     "ffmpeg",
@@ -263,7 +253,6 @@ class TestNormalizeVideo:
             output2 = Path(of2.name)
 
         try:
-            # Generate test video
             subprocess.run(
                 [
                     "ffmpeg",
@@ -282,7 +271,6 @@ class TestNormalizeVideo:
                 timeout=30,
             )
 
-            # Generate test audio
             subprocess.run(
                 [
                     "ffmpeg",
@@ -300,8 +288,7 @@ class TestNormalizeVideo:
             normalize_video(test_video, test_audio, output1)
             normalize_video(test_video, test_audio, output2)
 
-            # Note: Due to encoding non-determinism, we check file sizes are equal
-            # True bit-identical output requires specific ffmpeg flags
+            # Due to encoding non-determinism, check file sizes are equal
             assert output1.stat().st_size == output2.stat().st_size
         finally:
             test_video.unlink(missing_ok=True)
@@ -335,7 +322,6 @@ class TestCanonicalFormat:
             output_path = Path(of.name)
 
         try:
-            # Generate test video
             subprocess.run(
                 [
                     "ffmpeg",
@@ -354,7 +340,6 @@ class TestCanonicalFormat:
                 timeout=30,
             )
 
-            # Generate test audio
             subprocess.run(
                 [
                     "ffmpeg",
@@ -371,7 +356,6 @@ class TestCanonicalFormat:
 
             normalize_video(test_video, test_audio, output_path)
 
-            # Check codec using ffprobe
             result = subprocess.run(
                 [
                     "ffprobe",
@@ -409,7 +393,6 @@ class TestCanonicalFormat:
             output_path = Path(of.name)
 
         try:
-            # Generate test video at 24fps
             subprocess.run(
                 [
                     "ffmpeg",
@@ -428,7 +411,6 @@ class TestCanonicalFormat:
                 timeout=30,
             )
 
-            # Generate test audio
             subprocess.run(
                 [
                     "ffmpeg",
@@ -445,7 +427,6 @@ class TestCanonicalFormat:
 
             normalize_video(test_video, test_audio, output_path)
 
-            # Check fps using ffprobe
             result = subprocess.run(
                 [
                     "ffprobe",
@@ -464,7 +445,6 @@ class TestCanonicalFormat:
                 timeout=10,
             )
 
-            # r_frame_rate is returned as fraction e.g., "30/1"
             fps_str = result.stdout.strip()
             if "/" in fps_str:
                 num, den = fps_str.split("/")

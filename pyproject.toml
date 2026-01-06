@@ -21,8 +21,8 @@ dev = [
     "ruff>=0.1.0",
 ]
 api = [
-    "fastapi>=0.100",
-    "uvicorn>=0.20",
+    "fastapi>=0.109.1",
+    "uvicorn>=0.40.0",
 ]
 metrics = [
     "numpy>=1.24",

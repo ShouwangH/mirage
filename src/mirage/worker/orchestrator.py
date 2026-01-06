@@ -161,8 +161,12 @@ class WorkerOrchestrator:
         # Parse params
         params = json.loads(spec.params_json) if spec.params_json else {}
 
-        # Extract seed from variant_key or use default
-        seed = hash(run.variant_key) % (2**32)
+        # Extract seed from variant_key using deterministic hash
+        # (Python's built-in hash() is non-deterministic across processes)
+        seed = int.from_bytes(
+            hashlib.sha256(run.variant_key.encode("utf-8")).digest()[:4],
+            byteorder="big",
+        )
 
         return GenerationInput(
             provider=spec.provider,
@@ -206,8 +210,21 @@ class WorkerOrchestrator:
         )
 
         if existing_call and existing_call.status == "completed":
-            # Reuse existing result if available
-            pass
+            # Reuse existing result - return cached artifact
+            from mirage.models.types import RawArtifact
+
+            return RawArtifact(
+                raw_video_path=str(
+                    self.output_dir
+                    / "runs"
+                    / run.run_id
+                    / "raw"
+                    / f"{existing_call.provider_job_id}.mp4"
+                ),
+                provider_job_id=existing_call.provider_job_id,
+                cost_usd=existing_call.cost_usd,
+                latency_ms=existing_call.latency_ms,
+            )
 
         # Create provider call record
         provider_call = ProviderCall(
@@ -258,7 +275,7 @@ class WorkerOrchestrator:
         Returns:
             CanonArtifact with normalized video.
         """
-        from mirage.normalize.ffmpeg import normalize_video
+        from mirage.normalize.video import normalize_video
 
         run_output_dir = self.output_dir / "runs" / run.run_id
         canon_path = run_output_dir / "output_canon.mp4"
