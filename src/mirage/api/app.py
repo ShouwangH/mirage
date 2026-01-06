@@ -48,10 +48,11 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     )
 
     # Include routes
-    from mirage.api.routes import experiments, runs
+    from mirage.api.routes import experiments, runs, tasks
 
     app.include_router(experiments.router, prefix="/api")
     app.include_router(runs.router, prefix="/api")
+    app.include_router(tasks.router, prefix="/api")
 
     # Mount static files for artifacts
     artifacts_dir = Path(os.environ.get("MIRAGE_ARTIFACTS_DIR", "artifacts"))
