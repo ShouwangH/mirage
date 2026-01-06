@@ -41,23 +41,35 @@ jobs:
 
   node:
     runs-on: ubuntu-latest
-    if: ${{ hashFiles('package.json') != '' }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: check package.json exists
+        id: check-npm
+        run: |
+          if [ -f package.json ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "No package.json found, skipping Node.js steps"
+          fi
+
       - name: set up node
+        if: steps.check-npm.outputs.exists == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
 
       - name: install node deps
+        if: steps.check-npm.outputs.exists == 'true'
         run: npm ci
 
       - name: node lint
+        if: steps.check-npm.outputs.exists == 'true'
         run: |
           if npm run -s lint; then echo "lint ok"; else exit 1; fi
 
       - name: node tests
+        if: steps.check-npm.outputs.exists == 'true'
         run: |
           if npm run -s test; then echo "tests ok"; else echo "no tests script or failed"; exit 1; fi
