@@ -36,28 +36,35 @@ def get_av_info(video_path: Path, audio_path: Path) -> dict:
 
     Raises:
         FileNotFoundError: If video file doesn't exist.
+        RuntimeError: If ffprobe fails or times out (30s timeout).
     """
     if not video_path.exists():
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
     # Get video info
-    video_result = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=r_frame_rate,duration,nb_frames",
-            "-of",
-            "json",
-            str(video_path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    try:
+        video_result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=r_frame_rate,duration,nb_frames",
+                "-of",
+                "json",
+                str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as e:
+        partial_output = e.stdout if e.stdout else "(no output)"
+        raise RuntimeError(
+            f"ffprobe timed out after 30s for {video_path}. Partial output: {partial_output}"
+        ) from e
 
     if video_result.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {video_result.stderr}")
