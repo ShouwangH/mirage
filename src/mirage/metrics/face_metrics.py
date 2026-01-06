@@ -1,4 +1,4 @@
-"""Face metrics using mediapipe.
+"""Face metrics - pure computations on face detection data.
 
 Metrics from METRICS.md:
 - face_present_ratio: % frames with detected face
@@ -7,11 +7,16 @@ Metrics from METRICS.md:
 - mouth_open_energy: variance of mouth openness
 - mouth_audio_corr: correlation between mouth and audio envelope
 - blink_count, blink_rate_hz: blink detection via eye aspect ratio
+
+Note: Face detection uses adapter/vision/mediapipe_face. This module contains
+only pure computations on the detected landmarks/bboxes.
 """
 
 from __future__ import annotations
 
 import math
+
+from mirage.adapter.vision import FaceExtractor
 
 # Mediapipe face mesh landmark indices
 # Upper lip: 13, Lower lip: 14 (simplified)
@@ -28,12 +33,24 @@ RIGHT_EYE_CENTER = 263
 EAR_THRESHOLD = 0.2  # Below this = blink
 BLINK_CONSEC_FRAMES = 2  # Minimum frames for a blink
 
+# Module-level extractor for reuse (avoids reinit overhead)
+_extractor: FaceExtractor | None = None
 
-def extract_face_data(frames: list) -> list:
-    """Extract face detection data from frames using mediapipe.
+
+def _get_extractor() -> FaceExtractor:
+    """Get or create the shared FaceExtractor instance."""
+    global _extractor
+    if _extractor is None:
+        _extractor = FaceExtractor()
+    return _extractor
+
+
+def extract_face_data(frames: list, fps: float = 30.0) -> list:
+    """Extract face detection data from frames via adapter.
 
     Args:
         frames: List of numpy array frames (BGR).
+        fps: Video frame rate.
 
     Returns:
         List of face data dicts (or None if no face detected).
@@ -42,53 +59,22 @@ def extract_face_data(frames: list) -> list:
     if len(frames) == 0:
         return []
 
-    try:
-        import cv2
-        import mediapipe as mp
+    # Use adapter for face detection
+    extractor = _get_extractor()
+    track = extractor.extract_from_bgr_arrays(frames, fps=fps)
 
-        # Check if mediapipe has the expected API
-        if not hasattr(mp, "solutions") or not hasattr(mp.solutions, "face_mesh"):
-            return [None] * len(frames)
-    except (ImportError, AttributeError):
-        return [None] * len(frames)
-
-    mp_face_mesh = mp.solutions.face_mesh
-    face_mesh = mp_face_mesh.FaceMesh(
-        static_image_mode=False,
-        max_num_faces=1,
-        refine_landmarks=True,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
-
+    # Convert FaceTrack to legacy dict format with derived values
     results = []
-    for frame in frames:
-        # Convert BGR to RGB for mediapipe
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = face_mesh.process(rgb_frame)
-
-        if result.multi_face_landmarks and len(result.multi_face_landmarks) > 0:
-            landmarks = result.multi_face_landmarks[0].landmark
-            h, w = frame.shape[:2]
-
-            # Extract normalized landmarks
-            lm_list = [[lm.x, lm.y] for lm in landmarks]
-
-            # Compute bounding box from landmarks
-            xs = [lm.x * w for lm in landmarks]
-            ys = [lm.y * h for lm in landmarks]
-            bbox = [min(xs), min(ys), max(xs), max(ys)]
-
-            # Compute mouth openness (distance between upper and lower lip)
-            mouth_openness = _compute_mouth_openness(lm_list)
-
-            # Compute eye aspect ratio for blink detection
-            ear = _compute_eye_aspect_ratio(lm_list)
+    for fd in track.face_data:
+        if fd.detected and len(fd.landmarks) > 0:
+            # Compute derived metrics from landmarks
+            mouth_openness = _compute_mouth_openness(fd.landmarks)
+            ear = _compute_eye_aspect_ratio(fd.landmarks)
 
             results.append(
                 {
-                    "bbox": bbox,
-                    "landmarks": lm_list,
+                    "bbox": fd.bbox,
+                    "landmarks": fd.landmarks,
                     "mouth_openness": mouth_openness,
                     "eye_aspect_ratio": ear,
                 }
@@ -96,7 +82,6 @@ def extract_face_data(frames: list) -> list:
         else:
             results.append(None)
 
-    face_mesh.close()
     return results
 
 

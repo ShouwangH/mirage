@@ -1,4 +1,4 @@
-"""Video quality metrics using ffmpeg/opencv/numpy.
+"""Video quality metrics using opencv/numpy.
 
 Metrics from METRICS.md:
 - decode_ok: video can be decoded and has >= 1 frame
@@ -9,13 +9,18 @@ Metrics from METRICS.md:
 - flicker_score: luminance instability
 - blur_score: variance of Laplacian (higher = sharper)
 - frame_diff_spike_count: glitch detection
+
+Note: This module uses cv2/numpy for image processing transforms (grayscale,
+histogram, laplacian). These are deterministic array operations and belong
+in the metrics layer, not adapters. Video file IO uses adapter/media/.
 """
 
 from __future__ import annotations
 
-import json
-import subprocess
 from pathlib import Path
+
+from mirage.adapter.media import probe_audio, probe_video
+from mirage.adapter.media.video_decode import VideoReader
 
 # Thresholds for metric computation
 FREEZE_EPSILON = 1.0  # Mean absolute diff below this = frozen
@@ -36,91 +41,31 @@ def get_av_info(video_path: Path, audio_path: Path) -> dict:
 
     Raises:
         FileNotFoundError: If video file doesn't exist.
-        RuntimeError: If ffprobe fails or times out (30s timeout).
+        RuntimeError: If probe fails or times out.
     """
-    if not video_path.exists():
-        raise FileNotFoundError(f"Video file not found: {video_path}")
-
-    # Get video info
-    try:
-        video_result = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=r_frame_rate,duration,nb_frames",
-                "-of",
-                "json",
-                str(video_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except subprocess.TimeoutExpired as e:
-        partial_output = e.stdout if e.stdout else "(no output)"
-        raise RuntimeError(
-            f"ffprobe timed out after 30s for {video_path}. Partial output: {partial_output}"
-        ) from e
-
-    if video_result.returncode != 0:
-        raise RuntimeError(f"ffprobe failed: {video_result.stderr}")
-
-    video_data = json.loads(video_result.stdout)
-    video_stream = video_data.get("streams", [{}])[0]
-
-    # Parse fps
-    fps_str = video_stream.get("r_frame_rate", "30/1")
-    if "/" in fps_str:
-        num, den = fps_str.split("/")
-        fps = int(num) / int(den) if int(den) != 0 else 30.0
-    else:
-        fps = float(fps_str)
-
-    # Parse duration and frame count
-    video_duration = float(video_stream.get("duration", "0"))
-    video_duration_ms = int(video_duration * 1000)
-
-    nb_frames_str = video_stream.get("nb_frames", "0")
-    frame_count = int(nb_frames_str) if nb_frames_str else int(video_duration * fps)
+    # Get video info via adapter
+    video_info = probe_video(video_path)
 
     # Get audio duration
     audio_duration_ms = 0
     if audio_path.exists():
-        audio_result = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "json",
-                str(audio_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if audio_result.returncode == 0:
-            audio_data = json.loads(audio_result.stdout)
-            audio_duration = float(audio_data.get("format", {}).get("duration", "0"))
-            audio_duration_ms = int(audio_duration * 1000)
+        try:
+            audio_info = probe_audio(audio_path)
+            audio_duration_ms = audio_info.duration_ms
+        except RuntimeError:
+            pass  # Audio probe failed, use 0
 
     return {
-        "video_duration_ms": video_duration_ms,
+        "video_duration_ms": video_info.duration_ms,
         "audio_duration_ms": audio_duration_ms,
-        "av_duration_delta_ms": abs(video_duration_ms - audio_duration_ms),
-        "fps": fps,
-        "frame_count": frame_count,
+        "av_duration_delta_ms": abs(video_info.duration_ms - audio_duration_ms),
+        "fps": video_info.fps,
+        "frame_count": video_info.frame_count,
     }
 
 
 def decode_video(video_path: Path, max_frames: int = 0) -> list:
-    """Decode video frames using OpenCV.
+    """Decode video frames via adapter.
 
     Args:
         video_path: Path to video file.
@@ -129,31 +74,17 @@ def decode_video(video_path: Path, max_frames: int = 0) -> list:
     Returns:
         List of numpy arrays (BGR frames), empty if decode fails.
     """
-    try:
-        import cv2
-    except ImportError:
-        return []
-
     if not video_path.exists():
         return []
 
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+    try:
+        with VideoReader(video_path) as reader:
+            frames = list(
+                reader.iter_frames(max_frames=max_frames if max_frames > 0 else None)
+            )
+            return [f.bgr for f in frames]
+    except (FileNotFoundError, RuntimeError):
         return []
-
-    frames = []
-    count = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frames.append(frame)
-        count += 1
-        if max_frames > 0 and count >= max_frames:
-            break
-
-    cap.release()
-    return frames
 
 
 def compute_freeze_frame_ratio(frames: list) -> float:

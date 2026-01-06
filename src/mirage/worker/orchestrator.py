@@ -258,7 +258,7 @@ class WorkerOrchestrator:
         Returns:
             CanonArtifact with normalized video.
         """
-        from mirage.normalize.ffmpeg import normalize_video
+        from mirage.normalize.video import normalize_video
 
         run_output_dir = self.output_dir / "runs" / run.run_id
         canon_path = run_output_dir / "output_canon.mp4"
