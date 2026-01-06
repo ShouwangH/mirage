@@ -10,7 +10,7 @@ readme = "docs/README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "pydantic>=2.0",
+    "pydantic>=2.4.0",
     "sqlalchemy>=2.0",
 ]
 
