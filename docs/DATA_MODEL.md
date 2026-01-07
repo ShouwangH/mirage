@@ -55,12 +55,14 @@ this is an immutable run ledger:
 - provider
 - provider_idempotency_key
 - attempt
-- status (in_flight/succeeded/failed_transient/failed_permanent)
+- status (created/completed/failed)
 - provider_job_id (nullable)
 - request_json_sanitized (nullable)
 - response_json_sanitized (nullable)
 - cost_usd (nullable)
 - latency_ms (nullable)
+- raw_artifact_uri (nullable) — path to raw video artifact
+- raw_artifact_sha256 (nullable) — hash of raw artifact for verification
 - created_at
 
 **unique constraint**
