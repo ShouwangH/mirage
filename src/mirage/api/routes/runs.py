@@ -8,21 +8,22 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 
 from mirage.api.app import get_db_session
-from mirage.db.schema import MetricResult, Run
+from mirage.db import repo
+from mirage.db.repo import DbSession
+from mirage.models.domain import RunEntity
 from mirage.models.types import MetricBundleV1, RunDetail
 
 router = APIRouter()
 
 
-def _build_run_detail(session: Session, run: Run) -> RunDetail:
-    """Build RunDetail from Run record.
+def _build_run_detail(session: DbSession, run: RunEntity) -> RunDetail:
+    """Build RunDetail from RunEntity.
 
     Args:
         session: Database session.
-        run: Run record.
+        run: Run entity.
 
     Returns:
         RunDetail model.
@@ -31,14 +32,8 @@ def _build_run_detail(session: Session, run: Run) -> RunDetail:
     status_badge = None
     reasons: list[str] = []
 
-    metric_result = (
-        session.query(MetricResult)
-        .filter(
-            MetricResult.run_id == run.run_id,
-            MetricResult.metric_name == "MetricBundleV1",
-        )
-        .first()
-    )
+    # Get metrics via repository
+    metric_result = repo.get_metric_result(session, run.run_id)
 
     if metric_result and metric_result.value_json:
         try:
@@ -67,7 +62,7 @@ def _build_run_detail(session: Session, run: Run) -> RunDetail:
 @router.get("/runs/{run_id}", response_model=RunDetail)
 def get_run(
     run_id: str,
-    session: Session = Depends(get_db_session),
+    session: DbSession = Depends(get_db_session),
 ) -> RunDetail:
     """Get run detail.
 
@@ -81,7 +76,8 @@ def get_run(
     Raises:
         HTTPException: 404 if run not found.
     """
-    run = session.query(Run).filter(Run.run_id == run_id).first()
+    # Get run via repository
+    run = repo.get_run(session, run_id)
 
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")

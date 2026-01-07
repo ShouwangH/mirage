@@ -33,6 +33,28 @@ or
 - `node scripts/run_worker.mjs ...`
 but keep it one language if possible.
 
+#### worker architecture
+the worker uses a two-layer design:
+
+**WorkerOrchestrator** (thin coordination layer):
+- claims queued runs atomically via `SELECT ... FOR UPDATE SKIP LOCKED`
+- builds RunContext from database lookups
+- delegates to RunProcessor
+- handles status updates and error recording
+
+**RunProcessor** (pure single-run processing):
+- receives pre-built RunContext with all paths, IDs, and inputs
+- executes pipeline: provider → normalize → metrics
+- no status management; just returns results or raises
+
+**RunContext** (immutable context):
+- run_id, experiment_id, item_id, variant_key, spec_hash
+- gen_input (GenerationInput with all provider params)
+- run_output_dir (Path for artifacts)
+
+this separation allows RunProcessor to be tested in isolation and keeps
+orchestration concerns (claiming, retries, status) separate from processing logic.
+
 ---
 
 ## 2) storage model
@@ -49,12 +71,15 @@ all artifacts are immutable and stored under a deterministic directory layout.
 
 **run layout:**
 `artifacts/runs/{run_id}/`
+- `raw/raw.mp4` — raw video from provider (stable name, not provider_job_id)
+- `output_canon.mp4` — normalized canonical video (required; browser-safe)
 - `input_audio.wav` (optional cached copy)
-- `output_raw.mp4` (as received, optional)
-- `output_canon.mp4` (required; browser-safe)
 - `preview.gif` (optional)
 - `metrics.json` (optional mirror of db)
 - `debug/` (optional overlays)
+
+note: raw artifacts are named by run_id directory, not provider_job_id. the job_id is
+provider-specific metadata stored in provider_calls table, not a stable file identifier.
 
 ---
 
@@ -80,9 +105,21 @@ all artifacts are immutable and stored under a deterministic directory layout.
 - `runs` unique: `(experiment_id, item_id, variant_key)`
 - `provider_calls` unique: `(provider, provider_idempotency_key)`
 - `metric_results` unique: `(run_id, metric_name, metric_version)`
-- `human_ratings` unique: `(task_id, rater_id, submitted_at)` (or allow multiple with versioning; but don’t overwrite)
+- `human_ratings` unique: `(task_id, rater_id, submitted_at)` (or allow multiple with versioning; but don't overwrite)
 
 **meaning:** retries are safe. re-runs do not double spend. artifacts are never overwritten.
+
+### 3.5 centralized identity utilities (`core/identity.py`)
+all identity/hash computations are centralized:
+
+- `compute_spec_hash(...)` — deterministic spec hash from inputs
+- `compute_run_id(...)` — deterministic run_id from experiment/item/variant/spec
+- `compute_provider_idempotency_key(...)` — deduplication key for provider calls
+- `sha256_file(path)` — streaming file hash (64KB chunks, memory-efficient)
+- `seed_from_variant_key(variant_key)` — deterministic seed extraction
+
+**important:** always use `sha256_file()` instead of `hashlib.sha256(file.read_bytes())`.
+streaming avoids loading large video files into memory.
 
 ---
 
@@ -95,11 +132,14 @@ all artifacts are immutable and stored under a deterministic directory layout.
 terminal states: `succeeded`, `failed` (never transition out)
 
 ### 4.2 ProviderCall status
-- `created` → `in_flight` → `succeeded`
-- `created` → `in_flight` → `failed_transient`
-- `created` → `in_flight` → `failed_permanent`
+- `created` → `completed`
+- `created` → `failed`
 
-transient failures may retry with incremented `attempt`.
+on completion, provider_call stores:
+- `raw_artifact_uri` — path to raw video for cache reuse
+- `raw_artifact_sha256` — hash for verification
+
+failed calls may retry with incremented `attempt`.
 
 ---
 
@@ -113,19 +153,19 @@ pseudo-logic:
 1) load `run`
 2) if `run.status == succeeded`: return (no-op)
 3) compute `provider_idempotency_key`
-4) try `INSERT provider_call(provider, key, attempt=1, status=in_flight)`
-   - on conflict: load existing call
-     - if existing call succeeded: attach existing artifact to run and return
-     - if in_flight: bail or wait (avoid dupe)
+4) query existing provider_call by (provider, idempotency_key)
+   - if exists and completed: use `raw_artifact_uri` from DB (not guessed path)
+   - otherwise: create new provider_call with status=created
 5) call provider with idempotency header if supported
-6) write provider output to `output_raw.mp4.tmp`
-7) transcode to canonical `output_canon.mp4.tmp`
-8) compute sha256 of canonical output
-9) atomically finalize:
-   - rename `.tmp` → final
-10) db transaction:
-   - mark provider_call succeeded with cost/latency metadata
-   - mark run succeeded with `output_canon_uri` + sha256
+6) write provider output to `{run_id}/raw/raw.mp4`
+7) update provider_call with:
+   - status=completed
+   - raw_artifact_uri (actual path)
+   - raw_artifact_sha256 (for verification)
+   - cost/latency metadata
+8) transcode to canonical `output_canon.mp4`
+9) compute sha256 of canonical output
+10) mark run succeeded with `output_canon_uri` + sha256
 
 **crash safety:**
 - if crash before finalize: tmp files remain; safe to delete on next run

@@ -1,65 +1,98 @@
 """Rating submission for human evaluation.
 
 Handles rating storage and task status updates.
+Domain logic is pure - database operations go through repo.
 """
 
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
+from typing import Literal
 
-from sqlalchemy.orm import Session
+from mirage.db import repo
+from mirage.db.repo import DbSession
+from mirage.models.domain import RatingEntity
 
-from mirage.db.schema import HumanRating, HumanTask
+Choice = Literal["left", "right", "tie", "skip"]
+
+
+@dataclass
+class RatingInput:
+    """Input for rating submission."""
+
+    task_id: str
+    rater_id: str
+    choice_realism: Choice
+    choice_lipsync: Choice
+    choice_targetmatch: Choice | None = None
+    notes: str | None = None
+
+
+@dataclass
+class RatingResult:
+    """Result of rating submission."""
+
+    rating_id: str
+    task_id: str
+    success: bool
 
 
 def submit_rating(
-    session: Session,
-    task_id: str,
-    rater_id: str,
-    choice_realism: str,
-    choice_lipsync: str,
-    choice_targetmatch: str | None,
-    notes: str | None,
-) -> HumanRating:
+    session: DbSession,
+    rating_input: RatingInput,
+) -> RatingResult:
     """Submit a rating for a task.
 
     Creates a new rating record and updates task status to 'done'.
 
     Args:
         session: Database session.
-        task_id: Task being rated.
-        rater_id: Rater identifier.
-        choice_realism: Realism choice (left/right/tie/skip).
-        choice_lipsync: Lipsync choice (left/right/tie/skip).
-        choice_targetmatch: Target match choice (optional).
-        notes: Optional notes.
+        rating_input: Rating data.
 
     Returns:
-        Created HumanRating record.
+        RatingResult with rating ID and success status.
 
     Raises:
         ValueError: If task not found.
     """
-    # Verify task exists
-    task = session.query(HumanTask).filter(HumanTask.task_id == task_id).first()
+    # Verify task exists via repository
+    task = repo.get_task(session, rating_input.task_id)
     if task is None:
-        raise ValueError(f"Task not found: {task_id}")
+        raise ValueError(f"Task not found: {rating_input.task_id}")
 
-    # Create rating
-    rating = HumanRating(
-        rating_id=str(uuid.uuid4()),
-        task_id=task_id,
-        rater_id=rater_id,
-        choice_realism=choice_realism,
-        choice_lipsync=choice_lipsync,
-        choice_targetmatch=choice_targetmatch,
-        notes=notes,
+    # Create rating entity
+    rating = _create_rating_entity(rating_input)
+
+    # Persist via repository
+    repo.create_rating(session, rating)
+    repo.update_task_status(session, rating_input.task_id, "done")
+    repo.commit(session)
+
+    return RatingResult(
+        rating_id=rating.rating_id,
+        task_id=rating_input.task_id,
+        success=True,
     )
-    session.add(rating)
 
-    # Update task status
-    task.status = "done"
 
-    session.commit()
+def _create_rating_entity(rating_input: RatingInput) -> RatingEntity:
+    """Create rating entity from input.
 
-    return rating
+    Pure function - no database access.
+
+    Args:
+        rating_input: Rating input data.
+
+    Returns:
+        RatingEntity ready for insertion.
+    """
+    return RatingEntity(
+        rating_id=str(uuid.uuid4()),
+        task_id=rating_input.task_id,
+        rater_id=rating_input.rater_id,
+        choice_realism=rating_input.choice_realism,
+        choice_lipsync=rating_input.choice_lipsync,
+        choice_targetmatch=rating_input.choice_targetmatch,
+        notes=rating_input.notes,
+    )

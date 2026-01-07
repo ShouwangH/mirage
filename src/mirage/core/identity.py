@@ -4,10 +4,13 @@ Implements identity computation from ARCHITECTURE.md:
 - spec_hash: deterministic hash of generation spec
 - run_id: deterministic hash of run identity
 - provider_idempotency_key: deduplication key for provider calls
+- sha256_file: streaming file hash
+- seed_from_variant_key: deterministic seed extraction
 """
 
 import hashlib
 import json
+from pathlib import Path
 
 
 def compute_spec_hash(
@@ -104,3 +107,41 @@ def compute_provider_idempotency_key(
     key_str = f"{provider}|{spec_hash}"
 
     return hashlib.sha256(key_str.encode("utf-8")).hexdigest()
+
+
+def sha256_file(path: Path, chunk_size: int = 65536) -> str:
+    """Compute SHA256 of file using streaming (memory-efficient).
+
+    Args:
+        path: Path to file.
+        chunk_size: Bytes to read at a time (default 64KB).
+
+    Returns:
+        64-character hex string.
+
+    Raises:
+        FileNotFoundError: If file doesn't exist.
+    """
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def seed_from_variant_key(variant_key: str) -> int:
+    """Compute deterministic seed from variant_key.
+
+    Uses SHA256 to ensure determinism across Python processes
+    (unlike built-in hash() which is non-deterministic).
+
+    Args:
+        variant_key: Variant key string (e.g., "seed=42").
+
+    Returns:
+        32-bit unsigned integer seed.
+    """
+    return int.from_bytes(
+        hashlib.sha256(variant_key.encode("utf-8")).digest()[:4],
+        byteorder="big",
+    )

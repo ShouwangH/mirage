@@ -118,6 +118,8 @@ class ProviderCall(Base):
     response_json_sanitized: Mapped[str | None] = mapped_column(Text, nullable=True)
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_artifact_uri: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    raw_artifact_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
     )
