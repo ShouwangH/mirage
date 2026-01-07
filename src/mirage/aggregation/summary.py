@@ -64,8 +64,7 @@ def summarize_experiment(
 
     # Build task-rating pairs for pure computation
     task_rating_pairs = [
-        TaskRatingPair(task=task, ratings=ratings_by_task.get(task.task_id, []))
-        for task in tasks
+        TaskRatingPair(task=task, ratings=ratings_by_task.get(task.task_id, [])) for task in tasks
     ]
 
     # Compute win rates using pure domain logic
