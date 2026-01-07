@@ -33,9 +33,7 @@ def _get_metrics_for_run(session: DbSession, run: RunEntity) -> MetricBundleV1 |
     return None
 
 
-def _build_exported_runs(
-    session: DbSession, runs: list[RunEntity]
-) -> list["ExportedRun"]:
+def _build_exported_runs(session: DbSession, runs: list[RunEntity]) -> list["ExportedRun"]:
     """Build exported runs with metrics."""
     result = []
     for run in runs:
@@ -133,7 +131,9 @@ def export_experiment(
             "model": gen_spec.model if gen_spec else None,
             "model_version": gen_spec.model_version if gen_spec else None,
             "prompt_template": gen_spec.prompt_template if gen_spec else None,
-            "params": json.loads(gen_spec.params_json) if gen_spec and gen_spec.params_json else None,
+            "params": json.loads(gen_spec.params_json)
+            if gen_spec and gen_spec.params_json
+            else None,
         },
         dataset_item={
             "item_id": dataset_item.item_id if dataset_item else None,
@@ -149,7 +149,5 @@ def export_experiment(
     # Return as downloadable JSON
     return JSONResponse(
         content=export_data.model_dump(),
-        headers={
-            "Content-Disposition": f'attachment; filename="{experiment_id}_export.json"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="{experiment_id}_export.json"'},
     )
