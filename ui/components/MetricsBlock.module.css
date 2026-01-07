@@ -70,3 +70,14 @@
   color: #212529;
   font-family: 'SF Mono', Monaco, 'Consolas', monospace;
 }
+
+.metric dd.good {
+  color: #28a745;
+}
+
+.hint {
+  margin: 8px 0 0 0;
+  font-size: 11px;
+  color: #6c757d;
+  font-style: italic;
+}

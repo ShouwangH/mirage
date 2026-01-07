@@ -46,6 +46,12 @@ export function MetricsBlock({ metrics }: MetricsBlockProps) {
           <dt>A/V Delta</dt>
           <dd>{metrics.av_duration_delta_ms}ms</dd>
         </div>
+        {metrics.lse_d !== null && (
+          <div className={styles.metric}>
+            <dt>LSE-D</dt>
+            <dd>{formatNumber(metrics.lse_d, 1)}</dd>
+          </div>
+        )}
       </dl>
 
       {/* Collapsible detail sections */}
@@ -149,6 +155,31 @@ export function MetricsBlock({ metrics }: MetricsBlockProps) {
             </div>
           </dl>
         </CollapsibleSection>
+
+        {(metrics.lse_d !== null || metrics.lse_c !== null) && (
+          <CollapsibleSection
+            title="Lip Sync (SyncNet)"
+            badge={metrics.lse_d !== null ? formatNumber(metrics.lse_d, 1) : '—'}
+          >
+            <dl className={styles.detailGrid}>
+              <div className={styles.metric}>
+                <dt>LSE-D (Distance)</dt>
+                <dd className={metrics.lse_d !== null && metrics.lse_d < 8 ? styles.good : undefined}>
+                  {formatNumber(metrics.lse_d, 2)}
+                </dd>
+              </div>
+              <div className={styles.metric}>
+                <dt>LSE-C (Confidence)</dt>
+                <dd className={metrics.lse_c !== null && metrics.lse_c > 3 ? styles.good : undefined}>
+                  {formatNumber(metrics.lse_c, 2)}
+                </dd>
+              </div>
+            </dl>
+            <p className={styles.hint}>
+              LSE-D: lower is better ({"<"}8 good). LSE-C: higher is better ({">"}3 good).
+            </p>
+          </CollapsibleSection>
+        )}
       </div>
     </div>
   );
