@@ -1,0 +1,53 @@
+.card {
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 16px;
+  background-color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #212529;
+}
+
+.status {
+  font-size: 13px;
+  color: #6c757d;
+}
+
+.queued {
+  color: #6c757d;
+}
+
+.running {
+  color: #007bff;
+}
+
+.succeeded {
+  color: #28a745;
+}
+
+.failed {
+  color: #dc3545;
+}
+
+.noVideo {
+  background-color: #e9ecef;
+  border-radius: 4px;
+  padding: 40px 20px;
+  text-align: center;
+  color: #6c757d;
+  font-style: italic;
+}
