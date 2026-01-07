@@ -83,3 +83,38 @@ export function getArtifactUrl(path: string | null): string | null {
 export function getApiBaseUrl(): string {
   return API_BASE;
 }
+
+/**
+ * Submit a rating for a pairwise comparison task.
+ */
+export async function submitRating(rating: {
+  task_id: string;
+  rater_id: string;
+  choice_realism: 'left' | 'right' | 'tie' | 'skip';
+  choice_lipsync: 'left' | 'right' | 'tie' | 'skip';
+  choice_targetmatch?: 'left' | 'right' | 'tie' | 'skip' | null;
+  notes?: string | null;
+}): Promise<{ rating_id: string; task_id: string }> {
+  const res = await fetch(`${API_BASE}/api/ratings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(rating),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to submit rating: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/**
+ * Get a specific task by ID.
+ */
+export async function getTask(taskId: string): Promise<TaskDetail> {
+  const res = await fetch(`${API_BASE}/api/tasks/${taskId}`);
+  if (!res.ok) {
+    throw new Error(`Task not found: ${taskId}`);
+  }
+  return res.json();
+}

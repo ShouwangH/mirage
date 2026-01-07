@@ -1,0 +1,186 @@
+/* Eval page styles */
+
+.main {
+  min-height: 100vh;
+  background: #0f0f23;
+  padding: 2rem;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.header h1 {
+  margin: 0;
+  color: #fff;
+  font-size: 2rem;
+}
+
+.experimentId {
+  color: #888;
+  margin-top: 0.5rem;
+}
+
+.error {
+  background: #ff4444;
+  color: #fff;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  text-align: center;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.noTasks {
+  text-align: center;
+  max-width: 500px;
+  margin: 4rem auto;
+  padding: 2rem;
+  background: #1a1a2e;
+  border-radius: 12px;
+}
+
+.noTasks h2 {
+  color: #fff;
+  margin: 0 0 1rem 0;
+}
+
+.noTasks p {
+  color: #888;
+  margin: 0 0 1.5rem 0;
+}
+
+.createButton {
+  padding: 0.75rem 1.5rem;
+  background: #4f46e5;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.createButton:hover:not(:disabled) {
+  background: #4338ca;
+}
+
+.createButton:disabled {
+  background: #333;
+  color: #666;
+  cursor: not-allowed;
+}
+
+.complete {
+  text-align: center;
+  max-width: 600px;
+  margin: 2rem auto;
+}
+
+.complete h2 {
+  color: #4ade80;
+  margin: 0 0 2rem 0;
+  font-size: 1.75rem;
+}
+
+.summaryCard {
+  background: #1a1a2e;
+  border-radius: 12px;
+  padding: 1.5rem;
+  text-align: left;
+  margin-bottom: 2rem;
+}
+
+.summaryCard h3 {
+  color: #fff;
+  margin: 0 0 1rem 0;
+  text-align: center;
+}
+
+.summaryCard p {
+  color: #888;
+  margin: 0 0 1.5rem 0;
+  text-align: center;
+}
+
+.winRates {
+  margin-top: 1.5rem;
+}
+
+.winRates h4 {
+  color: #888;
+  margin: 0 0 1rem 0;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.winRate {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.variantName {
+  color: #fff;
+  font-size: 0.875rem;
+  min-width: 100px;
+}
+
+.rateBar {
+  flex: 1;
+  height: 8px;
+  background: #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.rateFill {
+  height: 100%;
+  background: linear-gradient(90deg, #4f46e5, #6366f1);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.rateValue {
+  color: #888;
+  font-size: 0.875rem;
+  min-width: 60px;
+  text-align: right;
+}
+
+.recommendation {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 8px;
+  color: #4ade80;
+  text-align: center;
+}
+
+.backButton {
+  padding: 0.75rem 1.5rem;
+  background: #333;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.backButton:hover {
+  background: #444;
+}
+
+.loading {
+  text-align: center;
+  color: #888;
+  padding: 2rem;
+}

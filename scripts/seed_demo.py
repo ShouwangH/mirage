@@ -29,7 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from mirage.core.identity import compute_run_id, compute_spec_hash  # noqa: E402
 from mirage.db.schema import DatasetItem, Experiment, GenerationSpec, Run  # noqa: E402
-from mirage.db.session import get_session  # noqa: E402
+from mirage.db.session import get_session, init_db  # noqa: E402
 
 # Constants
 DEMO_DB_PATH = PROJECT_ROOT / "demo.db"
@@ -146,6 +146,9 @@ def seed_database(video_path: Path, audio_path: Path) -> None:
         video_path: Path to demo video file.
         audio_path: Path to demo audio file.
     """
+    # Initialize database schema (creates tables if they don't exist)
+    init_db(DEMO_DB_PATH)
+
     # Get session for demo database
     session = get_session(DEMO_DB_PATH)
 

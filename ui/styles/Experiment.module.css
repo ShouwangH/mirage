@@ -7,13 +7,37 @@
 .header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
   margin-bottom: 32px;
+}
+
+.headerTitle {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 .header h1 {
   margin: 0;
   font-size: 28px;
+}
+
+.evalButton {
+  padding: 10px 20px;
+  background-color: #4f46e5;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background-color 0.15s ease;
+}
+
+.evalButton:hover {
+  background-color: #4338ca;
 }
 
 .status {

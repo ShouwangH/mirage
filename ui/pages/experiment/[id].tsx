@@ -5,6 +5,7 @@
 
 import { GetServerSideProps } from 'next';
 import Head from 'next/head';
+import Link from 'next/link';
 import { getExperiment } from '../../lib/api';
 import { VariantCard } from '../../components/VariantCard';
 import type { ExperimentOverview } from '../../types';
@@ -23,10 +24,15 @@ export default function ExperimentPage({ experiment }: ExperimentPageProps) {
 
       <main className={styles.main}>
         <header className={styles.header}>
-          <h1>Experiment: {experiment.experiment_id}</h1>
-          <span className={`${styles.status} ${styles[experiment.status]}`}>
-            {experiment.status}
-          </span>
+          <div className={styles.headerTitle}>
+            <h1>Experiment: {experiment.experiment_id}</h1>
+            <span className={`${styles.status} ${styles[experiment.status]}`}>
+              {experiment.status}
+            </span>
+          </div>
+          <Link href={`/eval/${experiment.experiment_id}`} className={styles.evalButton}>
+            Start Evaluation
+          </Link>
         </header>
 
         {/* Generation Spec */}

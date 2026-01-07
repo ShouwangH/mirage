@@ -514,7 +514,9 @@ def update_provider_call(
 ) -> None:
     """Update provider call fields."""
     call = (
-        session.query(ProviderCall).filter(ProviderCall.provider_call_id == provider_call_id).first()
+        session.query(ProviderCall)
+        .filter(ProviderCall.provider_call_id == provider_call_id)
+        .first()
     )
     if call:
         if status is not None:
