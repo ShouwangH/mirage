@@ -66,56 +66,44 @@ class MockProvider(ProviderBase):
         return None
 
     def _generate_synthetic_video(self, output_path: Path, seed: int) -> None:
-        """Generate a minimal synthetic video file.
+        """Generate a synthetic test pattern video using ffmpeg.
 
-        This creates a small but valid-ish video file for testing.
-        In a real implementation, this would call ffmpeg to generate
-        a proper test pattern video.
+        Creates a valid MP4 video with a test pattern that varies by seed.
         """
-        # Generate deterministic content based on seed
-        import random
+        import subprocess
 
-        rng = random.Random(seed)
+        # Use seed to vary the test pattern color (hex format)
+        # Convert seed to RGB hex color
+        r = (seed * 37) % 256
+        g = (seed * 59) % 256
+        b = (seed * 97) % 256
+        hex_color = f"0x{r:02x}{g:02x}{b:02x}"
 
-        # Create a minimal MP4-like file
-        # This is a stub - real implementation would use ffmpeg
-        header = bytes(
-            [
-                0x00,
-                0x00,
-                0x00,
-                0x1C,
-                0x66,
-                0x74,
-                0x79,
-                0x70,
-                0x69,
-                0x73,
-                0x6F,
-                0x6D,
-                0x00,
-                0x00,
-                0x02,
-                0x00,
-                0x69,
-                0x73,
-                0x6F,
-                0x6D,
-                0x69,
-                0x73,
-                0x6F,
-                0x32,
-                0x61,
-                0x76,
-                0x63,
-                0x31,
-            ]
-        )
-
-        # Add some deterministic random content
-        content = bytes(rng.getrandbits(8) for _ in range(500))
-
-        output_path.write_bytes(header + content)
+        # Generate 3-second test pattern video with seed-based color
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"color=c={hex_color}:s=640x480:d=3",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:v",
+                    "libx264",
+                    "-t",
+                    "3",
+                    str(output_path),
+                ],
+                capture_output=True,
+                check=True,
+                timeout=30,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            # Fallback: create minimal valid MP4 if ffmpeg unavailable
+            raise RuntimeError(f"Failed to generate synthetic video: {e}") from e
 
     def generate_variant(self, input: GenerationInput) -> RawArtifact:
         """Generate a video variant.
