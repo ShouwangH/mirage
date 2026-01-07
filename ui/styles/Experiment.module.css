@@ -1,0 +1,135 @@
+.main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.status {
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.draft {
+  background-color: #e9ecef;
+  color: #495057;
+}
+
+.running {
+  background-color: #cce5ff;
+  color: #004085;
+}
+
+.complete {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.section {
+  margin-bottom: 32px;
+}
+
+.section h2 {
+  font-size: 20px;
+  margin: 0 0 16px 0;
+  color: #212529;
+  border-bottom: 1px solid #dee2e6;
+  padding-bottom: 8px;
+}
+
+.collapsible {
+  cursor: pointer;
+}
+
+.collapsible h2 {
+  display: inline;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.specDetails {
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.specRow {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.specRow:last-child {
+  margin-bottom: 0;
+}
+
+.label {
+  font-weight: 600;
+  color: #6c757d;
+  min-width: 80px;
+}
+
+.prompt {
+  font-family: monospace;
+  background-color: #e9ecef;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.variantsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 24px;
+}
+
+.results {
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.recommended {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 18px;
+}
+
+.recommendedValue {
+  font-weight: 600;
+  color: #28a745;
+}
+
+.winRates h3 {
+  font-size: 16px;
+  margin: 0 0 8px 0;
+}
+
+.winRates ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.winRates li {
+  margin: 4px 0;
+}
+
+.comparisons {
+  margin-top: 16px;
+  color: #6c757d;
+  font-size: 14px;
+}

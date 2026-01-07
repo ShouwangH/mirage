@@ -1,0 +1,36 @@
+.container {
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.noMetrics {
+  color: #6c757d;
+  font-style: italic;
+  padding: 12px;
+  text-align: center;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin: 0;
+}
+
+.metric {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.metric dt {
+  color: #6c757d;
+  font-weight: normal;
+}
+
+.metric dd {
+  margin: 0;
+  font-weight: 600;
+  color: #212529;
+}
