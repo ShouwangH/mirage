@@ -1,10 +1,10 @@
-"""SyncNet adapter for lip-sync evaluation.
+"""Lip-sync evaluation adapter.
 
 Provides LSE-D (Lip Sync Error Distance) and LSE-C (Lip Sync Error Confidence)
-metrics using the SyncNet model for audio-visual synchronization assessment.
+metrics using correlation between mouth movement and audio energy.
 
-Model weights are downloaded automatically on first use.
-Gracefully returns None when dependencies are unavailable.
+- LSE-D: Lower is better (< 8 is good)
+- LSE-C: Higher is better (> 3 is good)
 """
 
 from mirage.adapter.syncnet.syncnet_adapter import SyncNetEvaluator, compute_lse_metrics

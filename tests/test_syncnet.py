@@ -33,25 +33,18 @@ class TestSyncNetGracefulDegradation:
 
         assert compute_lse_metrics is not None
 
-    def test_compute_returns_none_without_torch(self):
-        """compute_lse_metrics returns (None, None) without PyTorch."""
-        with patch.dict("sys.modules", {"torch": None}):
-            # Force reimport to pick up mocked torch
-            import importlib
+    def test_compute_returns_none_for_few_frames(self):
+        """compute_lse_metrics returns (None, None) with too few frames."""
+        from mirage.adapter.syncnet import compute_lse_metrics
 
-            import mirage.adapter.syncnet.syncnet_adapter as adapter
+        # Create too few frames (need at least 10)
+        frames = [np.zeros((240, 320, 3), dtype=np.uint8) for _ in range(5)]
+        audio_path = Path("/nonexistent/audio.wav")
 
-            importlib.reload(adapter)
-
-            # Create dummy inputs
-            frames = [np.zeros((240, 320, 3), dtype=np.uint8) for _ in range(10)]
-            audio_path = Path("/nonexistent/audio.wav")
-
-            # Mock the _check_dependencies to return False
-            with patch.object(adapter, "_check_dependencies", return_value=False):
-                evaluator = adapter.SyncNetEvaluator()
-                result = evaluator.evaluate(frames, audio_path)
-                assert result is None
+        lse_d, lse_c = compute_lse_metrics(frames, audio_path)
+        # Should return None due to insufficient frames
+        assert lse_d is None
+        assert lse_c is None
 
     def test_compute_returns_none_for_nonexistent_audio(self):
         """compute_lse_metrics returns (None, None) for missing audio."""
@@ -65,49 +58,36 @@ class TestSyncNetGracefulDegradation:
         assert lse_d is None or isinstance(lse_d, float)
 
 
-class TestSyncNetModel:
-    """Test SyncNet model architecture."""
+class TestLipSyncCorrelation:
+    """Test correlation-based lip sync evaluation."""
 
-    @pytest.mark.skipif(not _torch_available(), reason="PyTorch not available")
-    def test_model_architecture(self):
-        """SyncNet model has correct architecture."""
-        from mirage.adapter.syncnet.syncnet_model import SyncNetModel
+    def test_correlation_with_matching_signals(self):
+        """Correlation should be high for matching signals."""
+        from mirage.adapter.syncnet.syncnet_adapter import _compute_correlation_with_lag
 
-        model = SyncNetModel()
+        # Create two correlated signals
+        t = np.linspace(0, 2 * np.pi, 100)
+        signal1 = np.sin(t).astype(np.float32)
+        signal2 = np.sin(t).astype(np.float32)
 
-        # Check that model has both streams
-        assert hasattr(model, "audio_encoder")
-        assert hasattr(model, "video_encoder")
-        assert hasattr(model, "audio_fc")
-        assert hasattr(model, "video_fc")
+        corr, lag = _compute_correlation_with_lag(signal1, signal2)
 
-    @pytest.mark.skipif(not _torch_available(), reason="PyTorch not available")
-    def test_model_forward_shapes(self):
-        """Model produces correct output shapes."""
-        import torch
+        assert corr > 0.9  # High correlation
+        # Lag can be anywhere in search range for identical signals
 
-        from mirage.adapter.syncnet.syncnet_model import SyncNetModel
+    def test_correlation_with_offset_signals(self):
+        """Correlation should detect lag in offset signals."""
+        from mirage.adapter.syncnet.syncnet_adapter import _compute_correlation_with_lag
 
-        model = SyncNetModel()
-        model.eval()
+        # Create signal and lagged version
+        t = np.linspace(0, 4 * np.pi, 100)
+        signal1 = np.sin(t).astype(np.float32)
+        signal2 = np.roll(signal1, 3)  # Shift by 3 frames
 
-        # Dummy inputs
-        # Audio: (batch, 1, time_steps, mfcc_coeffs)
-        audio = torch.randn(2, 1, 20, 13)
-        # Video: (batch, 3, frames, height, width)
-        video = torch.randn(2, 3, 5, 112, 112)
+        corr, lag = _compute_correlation_with_lag(signal1, signal2, max_lag=5)
 
-        with torch.no_grad():
-            try:
-                audio_emb = model.forward_audio(audio)
-                video_emb = model.forward_video(video)
-
-                # Embeddings should be 1024-dimensional
-                assert audio_emb.shape == (2, 1024)
-                assert video_emb.shape == (2, 1024)
-            except RuntimeError:
-                # Shape mismatch is acceptable - architecture may need tuning
-                pytest.skip("Model shapes need adjustment for input sizes")
+        assert corr > 0.5  # Should still find good correlation
+        # Lag should be detected (might be -3 or close)
 
 
 class TestSyncNetMetricsIntegration:

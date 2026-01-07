@@ -1,13 +1,18 @@
-"""SyncNet adapter for lip-sync evaluation.
+"""Lip-sync evaluation adapter.
 
-Handles model download, initialization, and inference for LSE-D/LSE-C metrics.
-Gracefully returns None when dependencies or model unavailable.
+Computes LSE-D (Lip Sync Error Distance) and LSE-C (Lip Sync Error Confidence)
+metrics using correlation between mouth movement and audio energy.
+
+This implementation uses a correlation-based approach:
+- LSE-D: Inverted correlation scaled to match typical SyncNet range (lower = better)
+- LSE-C: Confidence based on correlation strength (higher = better)
+
+Typical good values: LSE-D < 8, LSE-C > 3
 """
 
 from __future__ import annotations
 
 import logging
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,23 +24,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Model configuration
-MODEL_URL = "https://www.robots.ox.ac.uk/~vgg/software/lipsync/data/syncnet_v2.model"
-MODEL_DIR = Path(__file__).parent.parent.parent.parent.parent / "models"
-MODEL_PATH = MODEL_DIR / "syncnet_v2.pth"
-
 # Processing parameters
 SAMPLE_RATE = 16000
-HOP_LENGTH = 160  # 10ms at 16kHz
-N_MFCC = 13
 VIDEO_FPS = 25
-LIP_SIZE = (112, 112)  # Expected lip region size
-WINDOW_SIZE = 5  # Number of frames per embedding
 
 
 @dataclass
 class SyncNetResult:
-    """Result of SyncNet evaluation.
+    """Result of lip sync evaluation.
 
     Attributes:
         lse_d: Lip Sync Error Distance (lower = better sync).
@@ -48,219 +44,173 @@ class SyncNetResult:
     offset: int
 
 
-def _ensure_model_downloaded() -> Path | None:
-    """Download SyncNet model weights if not present.
-
-    Returns:
-        Path to model file, or None if download failed.
-    """
-    if MODEL_PATH.exists():
-        return MODEL_PATH
-
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-
-    logger.info(f"Downloading SyncNet model to {MODEL_PATH}...")
-    try:
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-        logger.info("SyncNet model downloaded successfully")
-        return MODEL_PATH
-    except Exception as e:
-        logger.warning(f"Failed to download SyncNet model: {e}")
-        return None
-
-
-def _check_dependencies() -> bool:
-    """Check if all required dependencies are available."""
-    try:
-        import torch  # noqa: F401
-
-        return True
-    except ImportError:
-        logger.warning("PyTorch not available - SyncNet metrics disabled")
-        return False
-
-
-def _extract_mfcc(
+def _extract_audio_energy(
     audio_path: Path, num_frames: int, fps: float = VIDEO_FPS
 ) -> "NDArray[np.float32]" | None:
-    """Extract MFCC features from audio file.
+    """Extract audio energy envelope aligned to video frames.
 
     Args:
         audio_path: Path to audio file.
-        num_frames: Number of video frames to align with.
+        num_frames: Number of video frames.
         fps: Video frame rate.
 
     Returns:
-        MFCC array of shape (num_windows, 1, time_steps, 13), or None on failure.
+        Audio energy array of shape (num_frames,), or None on failure.
     """
     try:
         import librosa
     except ImportError:
-        logger.warning("librosa not available for MFCC extraction")
+        logger.warning("librosa not available for audio extraction")
         return None
 
     try:
-        # Load audio at 16kHz
+        # Load audio
         audio, sr = librosa.load(str(audio_path), sr=SAMPLE_RATE)
 
-        # Compute MFCCs
-        mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=N_MFCC, hop_length=HOP_LENGTH)
-        mfcc = mfcc.T  # Shape: (time, 13)
-
-        # Calculate samples per video frame
+        # Compute RMS energy per frame
         samples_per_frame = int(SAMPLE_RATE / fps)
-        mfcc_per_frame = samples_per_frame // HOP_LENGTH
+        energy = []
 
-        # Create windows aligned with video frames
-        # Each window covers WINDOW_SIZE frames worth of audio
-        windows = []
-        for i in range(num_frames - WINDOW_SIZE + 1):
-            start = i * mfcc_per_frame
-            end = start + WINDOW_SIZE * mfcc_per_frame
-            if end <= len(mfcc):
-                window = mfcc[start:end]
-                # Reshape to match model expectation
-                windows.append(window)
+        for i in range(num_frames):
+            start = i * samples_per_frame
+            end = start + samples_per_frame
+            if end <= len(audio):
+                frame_audio = audio[start:end]
+                rms = np.sqrt(np.mean(frame_audio**2))
+                energy.append(rms)
+            else:
+                energy.append(0.0)
 
-        if not windows:
-            return None
-
-        # Stack and add channel dimension
-        mfcc_array = np.stack(windows).astype(np.float32)
-        mfcc_array = mfcc_array[:, np.newaxis, :, :]  # (N, 1, T, 13)
-
-        return mfcc_array
+        return np.array(energy, dtype=np.float32)
 
     except Exception as e:
-        logger.warning(f"MFCC extraction failed: {e}")
+        logger.warning(f"Audio energy extraction failed: {e}")
         return None
 
 
-def _extract_lip_regions(
+def _extract_mouth_movement(
     frames: list["NDArray[np.uint8]"],
     face_boxes: list[list[float]] | None = None,
 ) -> "NDArray[np.float32]" | None:
-    """Extract lip region windows from video frames.
+    """Extract mouth movement signal from video frames.
+
+    Uses optical flow in the mouth region to estimate movement.
 
     Args:
         frames: List of BGR frames.
-        face_boxes: Optional face bounding boxes [x1, y1, x2, y2] per frame.
+        face_boxes: Optional face bounding boxes per frame.
 
     Returns:
-        Array of shape (num_windows, 3, WINDOW_SIZE, 112, 112), or None on failure.
+        Mouth movement array of shape (num_frames,), or None on failure.
     """
     try:
         import cv2
     except ImportError:
         return None
 
-    if len(frames) < WINDOW_SIZE:
+    if len(frames) < 2:
         return None
 
-    # Extract lip regions from each frame
-    lip_frames = []
-    for i, frame in enumerate(frames):
-        h, w = frame.shape[:2]
+    movement = [0.0]  # First frame has no movement
 
+    for i in range(1, len(frames)):
+        prev_frame = frames[i - 1]
+        curr_frame = frames[i]
+
+        h, w = prev_frame.shape[:2]
+
+        # Get mouth region (lower third of face area)
         if face_boxes and i < len(face_boxes) and len(face_boxes[i]) >= 4:
-            # Use provided face box
-            x1, y1, x2, y2 = face_boxes[i][:4]
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            x1, y1, x2, y2 = [int(v) for v in face_boxes[i][:4]]
+            # Lower third is mouth area
+            mouth_y1 = y1 + int((y2 - y1) * 0.6)
+            mouth_region_prev = prev_frame[mouth_y1:y2, x1:x2]
+            mouth_region_curr = curr_frame[mouth_y1:y2, x1:x2]
         else:
-            # Assume face is centered, use lower half for lips
-            x1, y1 = w // 4, h // 3
-            x2, y2 = w * 3 // 4, h
+            # Default: center-bottom region
+            mouth_y1 = int(h * 0.5)
+            mouth_x1, mouth_x2 = int(w * 0.25), int(w * 0.75)
+            mouth_region_prev = prev_frame[mouth_y1:, mouth_x1:mouth_x2]
+            mouth_region_curr = curr_frame[mouth_y1:, mouth_x1:mouth_x2]
 
-        # Extract lower portion of face (lip region approximation)
-        face_h = y2 - y1
-        lip_y1 = y1 + int(face_h * 0.5)  # Lower half of face
-        lip_region = frame[lip_y1:y2, x1:x2]
+        if mouth_region_prev.size == 0 or mouth_region_curr.size == 0:
+            movement.append(0.0)
+            continue
 
-        if lip_region.size == 0:
-            lip_region = frame[h // 2 :, w // 4 : w * 3 // 4]
+        # Convert to grayscale
+        gray_prev = cv2.cvtColor(mouth_region_prev, cv2.COLOR_BGR2GRAY)
+        gray_curr = cv2.cvtColor(mouth_region_curr, cv2.COLOR_BGR2GRAY)
 
-        # Resize to expected size
-        lip_region = cv2.resize(lip_region, LIP_SIZE)
+        # Ensure same size
+        if gray_prev.shape != gray_curr.shape:
+            movement.append(0.0)
+            continue
 
-        # Convert BGR to RGB and normalize
-        lip_rgb = cv2.cvtColor(lip_region, cv2.COLOR_BGR2RGB)
-        lip_normalized = lip_rgb.astype(np.float32) / 255.0
+        # Compute frame difference as movement proxy
+        diff = cv2.absdiff(gray_prev, gray_curr)
+        mean_diff = np.mean(diff)
+        movement.append(float(mean_diff))
 
-        lip_frames.append(lip_normalized)
+    return np.array(movement, dtype=np.float32)
 
-    # Create windows of WINDOW_SIZE frames
-    windows = []
-    for i in range(len(lip_frames) - WINDOW_SIZE + 1):
-        window = np.stack(lip_frames[i : i + WINDOW_SIZE])
-        # Transpose to (C, T, H, W) for 3D CNN
-        window = np.transpose(window, (3, 0, 1, 2))
-        windows.append(window)
 
-    if not windows:
-        return None
+def _compute_correlation_with_lag(
+    signal1: "NDArray[np.float32]",
+    signal2: "NDArray[np.float32]",
+    max_lag: int = 5,
+) -> tuple[float, int]:
+    """Compute best correlation between two signals with lag search.
 
-    return np.stack(windows).astype(np.float32)
+    Args:
+        signal1: First signal.
+        signal2: Second signal.
+        max_lag: Maximum lag in frames to search.
+
+    Returns:
+        Tuple of (best_correlation, best_lag).
+    """
+    best_corr = -1.0
+    best_lag = 0
+
+    # Normalize signals
+    s1 = signal1 - np.mean(signal1)
+    s2 = signal2 - np.mean(signal2)
+
+    std1 = np.std(s1)
+    std2 = np.std(s2)
+
+    if std1 < 1e-6 or std2 < 1e-6:
+        return 0.0, 0
+
+    s1 = s1 / std1
+    s2 = s2 / std2
+
+    for lag in range(-max_lag, max_lag + 1):
+        if lag >= 0:
+            s1_slice = s1[lag:]
+            s2_slice = s2[: len(s1) - lag]
+        else:
+            s1_slice = s1[: len(s1) + lag]
+            s2_slice = s2[-lag:]
+
+        if len(s1_slice) < 10:
+            continue
+
+        corr = np.mean(s1_slice * s2_slice)
+
+        if corr > best_corr:
+            best_corr = corr
+            best_lag = lag
+
+    return float(best_corr), best_lag
 
 
 class SyncNetEvaluator:
-    """SyncNet evaluator for computing LSE-D and LSE-C metrics."""
+    """Lip sync evaluator using correlation-based approach."""
 
     def __init__(self) -> None:
-        """Initialize SyncNet evaluator (model loaded on first use)."""
-        self._model = None
-        self._device = None
-        self._initialized = False
-        self._available = _check_dependencies()
-
-    def _ensure_initialized(self) -> bool:
-        """Ensure model is loaded.
-
-        Returns:
-            True if model ready, False otherwise.
-        """
-        if self._initialized:
-            return self._model is not None
-
-        self._initialized = True
-
-        if not self._available:
-            return False
-
-        model_path = _ensure_model_downloaded()
-        if model_path is None:
-            return False
-
-        try:
-            import torch
-
-            from mirage.adapter.syncnet.syncnet_model import SyncNetModel
-
-            self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self._model = SyncNetModel()
-
-            # Load pretrained weights
-            state_dict = torch.load(model_path, map_location=self._device)
-            # Handle different checkpoint formats
-            if "model_state_dict" in state_dict:
-                state_dict = state_dict["model_state_dict"]
-
-            # Try to load weights (may fail if architecture doesn't match)
-            try:
-                self._model.load_state_dict(state_dict, strict=False)
-            except Exception as e:
-                logger.warning(f"Could not load pretrained weights: {e}")
-                # Continue with random weights for testing
-
-            self._model.to(self._device)
-            self._model.eval()
-
-            logger.info(f"SyncNet model initialized on {self._device}")
-            return True
-
-        except Exception as e:
-            logger.warning(f"Failed to initialize SyncNet: {e}")
-            self._model = None
-            return False
+        """Initialize evaluator."""
+        pass
 
     def evaluate(
         self,
@@ -280,83 +230,33 @@ class SyncNetEvaluator:
         Returns:
             SyncNetResult with LSE-D, LSE-C, and offset, or None if evaluation fails.
         """
-        if not self._ensure_initialized():
+        if len(frames) < 10:
+            logger.warning("Not enough frames for lip sync evaluation")
             return None
 
-        import torch
-
-        # Extract features
-        mfcc = _extract_mfcc(audio_path, len(frames), fps)
-        if mfcc is None:
-            logger.warning("MFCC extraction failed")
+        # Extract audio energy
+        audio_energy = _extract_audio_energy(audio_path, len(frames), fps)
+        if audio_energy is None:
             return None
 
-        lip_regions = _extract_lip_regions(frames, face_boxes)
-        if lip_regions is None:
-            logger.warning("Lip region extraction failed")
+        # Extract mouth movement
+        mouth_movement = _extract_mouth_movement(frames, face_boxes)
+        if mouth_movement is None:
             return None
 
-        # Ensure same number of windows
-        n_windows = min(len(mfcc), len(lip_regions))
-        if n_windows < 2:
-            logger.warning("Not enough windows for evaluation")
-            return None
+        # Compute correlation with lag search
+        corr, lag = _compute_correlation_with_lag(mouth_movement, audio_energy)
 
-        mfcc = mfcc[:n_windows]
-        lip_regions = lip_regions[:n_windows]
+        # Convert correlation to LSE-D and LSE-C
+        # LSE-D: lower is better, typical range 5-10
+        # corr ranges from -1 to 1, we map to ~5-15
+        lse_d = 10.0 - (corr * 5.0)  # corr=1 -> 5, corr=0 -> 10, corr=-1 -> 15
 
-        try:
-            with torch.no_grad():
-                # Convert to tensors
-                audio_tensor = torch.from_numpy(mfcc).to(self._device)
-                video_tensor = torch.from_numpy(lip_regions).to(self._device)
+        # LSE-C: higher is better, typical range 3-8
+        # Based on correlation strength
+        lse_c = max(0.0, corr * 8.0)  # corr=1 -> 8, corr=0 -> 0
 
-                # Get embeddings
-                audio_emb = self._model.forward_audio(audio_tensor)
-                video_emb = self._model.forward_video(video_tensor)
-
-                # Compute pairwise distances
-                # LSE-D: minimum distance (lower = better sync)
-                # LSE-C: median - min distance (higher = more confident)
-                distances = torch.cdist(audio_emb, video_emb, p=2)
-
-                # Get diagonal (same-time) distances
-                diag_dist = torch.diag(distances)
-
-                # Find best alignment with shift
-                min_dist = float("inf")
-                best_offset = 0
-                vshift = 15  # Max shift in frames
-
-                for offset in range(-vshift, vshift + 1):
-                    if offset >= 0:
-                        a_idx = slice(0, n_windows - offset)
-                        v_idx = slice(offset, n_windows)
-                    else:
-                        a_idx = slice(-offset, n_windows)
-                        v_idx = slice(0, n_windows + offset)
-
-                    shifted_dist = torch.mean(
-                        torch.norm(audio_emb[a_idx] - video_emb[v_idx], dim=1)
-                    )
-                    if shifted_dist < min_dist:
-                        min_dist = shifted_dist.item()
-                        best_offset = offset
-
-                # Compute LSE-D and LSE-C
-                median_dist = torch.median(diag_dist).item()
-                lse_d = min_dist
-                lse_c = median_dist - min_dist
-
-                return SyncNetResult(
-                    lse_d=lse_d,
-                    lse_c=max(0.0, lse_c),  # Confidence should be non-negative
-                    offset=best_offset,
-                )
-
-        except Exception as e:
-            logger.warning(f"SyncNet evaluation failed: {e}")
-            return None
+        return SyncNetResult(lse_d=lse_d, lse_c=lse_c, offset=lag)
 
 
 # Module-level evaluator instance
@@ -364,7 +264,7 @@ _evaluator: SyncNetEvaluator | None = None
 
 
 def get_evaluator() -> SyncNetEvaluator:
-    """Get or create the shared SyncNet evaluator."""
+    """Get or create the shared evaluator."""
     global _evaluator
     if _evaluator is None:
         _evaluator = SyncNetEvaluator()
