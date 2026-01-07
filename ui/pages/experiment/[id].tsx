@@ -6,16 +6,18 @@
 import { GetServerSideProps } from 'next';
 import Head from 'next/head';
 import Link from 'next/link';
-import { getExperiment } from '../../lib/api';
+import { getExperiment, getHumanSummary } from '../../lib/api';
 import { VariantCard } from '../../components/VariantCard';
-import type { ExperimentOverview } from '../../types';
+import { Results } from '../../components/Results';
+import type { ExperimentOverview, HumanSummary } from '../../types';
 import styles from '../../styles/Experiment.module.css';
 
 interface ExperimentPageProps {
   experiment: ExperimentOverview;
+  humanSummary: HumanSummary | null;
 }
 
-export default function ExperimentPage({ experiment }: ExperimentPageProps) {
+export default function ExperimentPage({ experiment, humanSummary }: ExperimentPageProps) {
   return (
     <>
       <Head>
@@ -88,39 +90,13 @@ export default function ExperimentPage({ experiment }: ExperimentPageProps) {
         </section>
 
         {/* Human Evaluation Summary (if available) */}
-        {experiment.human_summary && (
+        {humanSummary && humanSummary.total_comparisons > 0 && (
           <section className={styles.section}>
-            <h2>Human Evaluation Results</h2>
-            <div className={styles.results}>
-              {experiment.human_summary.recommended_pick && (
-                <div className={styles.recommended}>
-                  <span className={styles.label}>Recommended Pick:</span>
-                  <span className={styles.recommendedValue}>
-                    {experiment.runs.find(
-                      (r) => r.run_id === experiment.human_summary!.recommended_pick
-                    )?.variant_key || experiment.human_summary.recommended_pick}
-                  </span>
-                </div>
-              )}
-              <div className={styles.winRates}>
-                <h3>Win Rates</h3>
-                <ul>
-                  {Object.entries(experiment.human_summary.win_rates).map(
-                    ([runId, rate]) => {
-                      const run = experiment.runs.find((r) => r.run_id === runId);
-                      return (
-                        <li key={runId}>
-                          {run?.variant_key || runId}: {(rate * 100).toFixed(0)}%
-                        </li>
-                      );
-                    }
-                  )}
-                </ul>
-              </div>
-              <div className={styles.comparisons}>
-                Total comparisons: {experiment.human_summary.total_comparisons}
-              </div>
-            </div>
+            <Results
+              experimentId={experiment.experiment_id}
+              summary={humanSummary}
+              runs={experiment.runs}
+            />
           </section>
         )}
       </main>
@@ -132,8 +108,18 @@ export const getServerSideProps: GetServerSideProps<ExperimentPageProps> = async
   params,
 }) => {
   try {
-    const experiment = await getExperiment(params?.id as string);
-    return { props: { experiment } };
+    const id = params?.id as string;
+    const experiment = await getExperiment(id);
+
+    // Try to get human summary (may not exist yet)
+    let humanSummary: HumanSummary | null = null;
+    try {
+      humanSummary = await getHumanSummary(id);
+    } catch {
+      // No summary yet, that's ok
+    }
+
+    return { props: { experiment, humanSummary } };
   } catch (error) {
     return { notFound: true };
   }
