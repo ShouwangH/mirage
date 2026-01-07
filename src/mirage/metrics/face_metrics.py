@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mirage.adapter.vision.mediapipe_face import FaceTrack
+    from mirage.adapter.vision.mediapipe_face import FaceData, FaceTrack
 
 # Landmark indices for derived computations
 # Upper lip: 13, Lower lip: 14 (simplified)
@@ -53,8 +53,8 @@ class FaceMetrics:
     blink_rate_hz: float | None
 
 
-def _compute_mouth_openness(landmarks: list[list[float]]) -> float:
-    """Compute mouth openness from landmarks.
+def _compute_mouth_openness_from_landmarks(landmarks: list[list[float]]) -> float:
+    """Compute mouth openness from landmarks (fallback method).
 
     Args:
         landmarks: List of [x, y] normalized landmark coordinates.
@@ -231,6 +231,26 @@ def _compute_landmark_jitter(face_track: "FaceTrack") -> float:
     return sum(movements) / len(movements)
 
 
+def _get_mouth_openness(fd: "FaceData") -> float:
+    """Get mouth openness from FaceData, preferring blendshape value.
+
+    Args:
+        fd: FaceData with detection results.
+
+    Returns:
+        Mouth openness value (0-1 from blendshapes, or landmark distance as fallback).
+    """
+    # Prefer blendshape value (more accurate)
+    if fd.mouth_open > 0:
+        return fd.mouth_open
+
+    # Fallback to landmark-based computation
+    if len(fd.landmarks) > 0:
+        return _compute_mouth_openness_from_landmarks(fd.landmarks)
+
+    return 0.0
+
+
 def _compute_mouth_open_energy(face_track: "FaceTrack") -> float:
     """Compute variance of mouth openness over time.
 
@@ -242,8 +262,8 @@ def _compute_mouth_open_energy(face_track: "FaceTrack") -> float:
     """
     openness_values = []
     for fd in face_track.face_data:
-        if fd.detected and len(fd.landmarks) > 0:
-            openness = _compute_mouth_openness(fd.landmarks)
+        if fd.detected:
+            openness = _get_mouth_openness(fd)
             openness_values.append(openness)
 
     if len(openness_values) < 2:
@@ -276,8 +296,8 @@ def _compute_mouth_audio_corr(face_track: "FaceTrack", audio_envelope: list[floa
     # Extract mouth openness values
     mouth_values = []
     for fd in face_track.face_data:
-        if fd.detected and len(fd.landmarks) > 0:
-            mouth_values.append(_compute_mouth_openness(fd.landmarks))
+        if fd.detected:
+            mouth_values.append(_get_mouth_openness(fd))
         else:
             mouth_values.append(0.0)
 
@@ -307,8 +327,28 @@ def _compute_mouth_audio_corr(face_track: "FaceTrack", audio_envelope: list[floa
     return float(corr)
 
 
+def _get_eye_openness(fd: "FaceData") -> float:
+    """Get average eye openness from FaceData, preferring blendshape values.
+
+    Args:
+        fd: FaceData with detection results.
+
+    Returns:
+        Eye openness value (0 = closed, 1 = open).
+    """
+    # Check if blendshape values are available (not default 1.0)
+    if fd.left_eye_open < 1.0 or fd.right_eye_open < 1.0:
+        return (fd.left_eye_open + fd.right_eye_open) / 2.0
+
+    # Fallback to landmark-based EAR computation
+    if len(fd.landmarks) > 0:
+        return _compute_eye_aspect_ratio(fd.landmarks)
+
+    return 0.3  # Default open
+
+
 def _compute_blink_metrics(face_track: "FaceTrack") -> tuple[int | None, float | None]:
-    """Detect blinks using eye aspect ratio.
+    """Detect blinks using eye openness (blendshapes or EAR).
 
     Args:
         face_track: FaceTrack with detection results.
@@ -319,20 +359,20 @@ def _compute_blink_metrics(face_track: "FaceTrack") -> tuple[int | None, float |
     if face_track.frame_count == 0 or face_track.fps <= 0:
         return None, None
 
-    # Extract EAR values
-    ear_values = []
+    # Extract eye openness values
+    eye_values = []
     for fd in face_track.face_data:
-        if fd.detected and len(fd.landmarks) > 0:
-            ear_values.append(_compute_eye_aspect_ratio(fd.landmarks))
+        if fd.detected:
+            eye_values.append(_get_eye_openness(fd))
         else:
-            ear_values.append(0.3)  # Default open
+            eye_values.append(0.3)  # Default open
 
-    # Detect blinks (EAR below threshold for consecutive frames)
+    # Detect blinks (eye openness below threshold for consecutive frames)
     blink_count = 0
     blink_frames = 0
 
-    for ear in ear_values:
-        if ear < EAR_THRESHOLD:
+    for eye_open in eye_values:
+        if eye_open < EAR_THRESHOLD:
             blink_frames += 1
         else:
             if blink_frames >= BLINK_CONSEC_FRAMES:

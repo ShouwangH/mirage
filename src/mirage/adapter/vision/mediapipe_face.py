@@ -1,21 +1,29 @@
 """Face detection and landmark extraction via MediaPipe.
 
-Adapter for MediaPipe Face Mesh model. Handles:
+Adapter for MediaPipe Face Landmarker (tasks API). Handles:
 - Model initialization (stateful, reusable)
 - Frame-by-frame face detection
 - Landmark normalization
+- Blendshape extraction for mouth/eye tracking
 - Graceful fallback when mediapipe unavailable
 """
 
 from __future__ import annotations
 
+import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 if TYPE_CHECKING:
     from mirage.adapter.media.video_decode import Frame
+
+# Model download URL and local path
+MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+MODEL_DIR = Path(__file__).parent.parent.parent.parent.parent / "models"
+MODEL_PATH = MODEL_DIR / "face_landmarker.task"
 
 
 @dataclass
@@ -27,12 +35,18 @@ class FaceData:
         bbox: Bounding box [x_min, y_min, x_max, y_max] in pixels.
         landmarks: List of [x, y] normalized coordinates (0-1).
         confidence: Detection confidence (0-1).
+        mouth_open: Mouth openness from blendshapes (0-1).
+        left_eye_open: Left eye openness from blendshapes (0-1).
+        right_eye_open: Right eye openness from blendshapes (0-1).
     """
 
     detected: bool = False
     bbox: list[float] = field(default_factory=list)
     landmarks: list[list[float]] = field(default_factory=list)
     confidence: float = 0.0
+    mouth_open: float = 0.0
+    left_eye_open: float = 1.0
+    right_eye_open: float = 1.0
 
 
 @dataclass
@@ -62,11 +76,25 @@ class FaceTrack:
         return len(self.face_data)
 
 
+def _ensure_model_downloaded() -> Path:
+    """Download the face landmarker model if not present.
+
+    Returns:
+        Path to the model file.
+    """
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not MODEL_PATH.exists():
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+
+    return MODEL_PATH
+
+
 class FaceExtractor:
-    """Stateful face detector using MediaPipe Face Mesh.
+    """Stateful face detector using MediaPipe Face Landmarker.
 
     Maintains model state to avoid re-initialization overhead.
-    Thread-safe for single-threaded use (mediapipe limitation).
+    Uses the new mediapipe tasks API (0.10+).
 
     Usage:
         extractor = FaceExtractor()
@@ -75,7 +103,7 @@ class FaceExtractor:
         track = extractor.extract_from_video(video_path)
     """
 
-    # MediaPipe face mesh landmark indices
+    # MediaPipe face mesh landmark indices (478 landmarks total)
     UPPER_LIP_IDX = 13
     LOWER_LIP_IDX = 14
     LEFT_EYE_INDICES = [33, 160, 158, 133, 153, 144]
@@ -96,7 +124,7 @@ class FaceExtractor:
         """
         self._min_detection_conf = min_detection_confidence
         self._min_tracking_conf = min_tracking_confidence
-        self._face_mesh = None
+        self._landmarker = None
         self._available: bool | None = None
 
     def _ensure_initialized(self) -> bool:
@@ -110,32 +138,67 @@ class FaceExtractor:
 
         try:
             import mediapipe as mp
+            from mediapipe.tasks import python
+            from mediapipe.tasks.python import vision
 
-            if not hasattr(mp, "solutions") or not hasattr(mp.solutions, "face_mesh"):
-                self._available = False
-                return False
+            # Ensure model is downloaded
+            model_path = _ensure_model_downloaded()
 
-            mp_face_mesh = mp.solutions.face_mesh
-            self._face_mesh = mp_face_mesh.FaceMesh(
-                static_image_mode=False,
-                max_num_faces=1,
-                refine_landmarks=True,
-                min_detection_confidence=self._min_detection_conf,
+            base_options = python.BaseOptions(model_asset_path=str(model_path))
+            options = vision.FaceLandmarkerOptions(
+                base_options=base_options,
+                running_mode=vision.RunningMode.IMAGE,
+                num_faces=1,
+                min_face_detection_confidence=self._min_detection_conf,
+                min_face_presence_confidence=self._min_detection_conf,
                 min_tracking_confidence=self._min_tracking_conf,
+                output_face_blendshapes=True,
             )
+            self._landmarker = vision.FaceLandmarker.create_from_options(options)
+            self._mp = mp  # Store reference for Image creation
             self._available = True
             return True
 
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError, Exception) as e:
+            # Log error for debugging but don't crash
+            import sys
+
+            print(f"MediaPipe initialization failed: {e}", file=sys.stderr)
             self._available = False
             return False
 
     def close(self) -> None:
         """Release mediapipe resources."""
-        if self._face_mesh is not None:
-            self._face_mesh.close()
-            self._face_mesh = None
+        if self._landmarker is not None:
+            self._landmarker.close()
+            self._landmarker = None
             self._available = None
+
+    def _extract_blendshape_values(self, blendshapes: list) -> tuple[float, float, float]:
+        """Extract mouth and eye openness from blendshapes.
+
+        Args:
+            blendshapes: List of blendshape categories from mediapipe.
+
+        Returns:
+            Tuple of (mouth_open, left_eye_open, right_eye_open).
+        """
+        mouth_open = 0.0
+        left_eye_open = 1.0
+        right_eye_open = 1.0
+
+        for bs in blendshapes:
+            name = bs.category_name.lower()
+            if name == "jawopen":
+                mouth_open = bs.score
+            elif name == "eyelookinleft" or name == "eyeblinkleft":
+                if name == "eyeblinkleft":
+                    left_eye_open = 1.0 - bs.score
+            elif name == "eyelookinright" or name == "eyeblinkright":
+                if name == "eyeblinkright":
+                    right_eye_open = 1.0 - bs.score
+
+        return mouth_open, left_eye_open, right_eye_open
 
     def extract_from_frames(
         self,
@@ -161,26 +224,18 @@ class FaceExtractor:
                 track.face_data.append(FaceData(detected=False))
             return track
 
-        try:
-            import cv2
-        except ImportError:
-            # cv2 needed for color conversion
-            for frame in frames:
-                track.frame_indices.append(frame.index)
-                track.timestamps_ms.append(frame.timestamp_ms)
-                track.face_data.append(FaceData(detected=False))
-            return track
-
         for frame in frames:
             track.frame_indices.append(frame.index)
             track.timestamps_ms.append(frame.timestamp_ms)
 
-            # Convert BGR to RGB for mediapipe
-            rgb_frame = cv2.cvtColor(frame.bgr, cv2.COLOR_BGR2RGB)
-            result = self._face_mesh.process(rgb_frame)
+            # Convert BGR to RGB and create mediapipe Image
+            rgb_frame = frame.bgr[:, :, ::-1].copy()  # BGR to RGB
+            mp_image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb_frame)
 
-            if result.multi_face_landmarks and len(result.multi_face_landmarks) > 0:
-                landmarks_raw = result.multi_face_landmarks[0].landmark
+            result = self._landmarker.detect(mp_image)
+
+            if result.face_landmarks and len(result.face_landmarks) > 0:
+                landmarks_raw = result.face_landmarks[0]
                 h, w = frame.bgr.shape[:2]
 
                 # Extract normalized landmarks
@@ -191,15 +246,25 @@ class FaceExtractor:
                 ys = [lm.y * h for lm in landmarks_raw]
                 bbox = [min(xs), min(ys), max(xs), max(ys)]
 
-                # Confidence from visibility scores
-                confidence = np.mean([lm.visibility for lm in landmarks_raw])
+                # Extract blendshape values for mouth/eye tracking
+                mouth_open = 0.0
+                left_eye_open = 1.0
+                right_eye_open = 1.0
+
+                if result.face_blendshapes and len(result.face_blendshapes) > 0:
+                    mouth_open, left_eye_open, right_eye_open = self._extract_blendshape_values(
+                        result.face_blendshapes[0]
+                    )
 
                 track.face_data.append(
                     FaceData(
                         detected=True,
                         bbox=bbox,
                         landmarks=landmarks,
-                        confidence=float(confidence),
+                        confidence=1.0,  # New API doesn't expose per-landmark confidence
+                        mouth_open=mouth_open,
+                        left_eye_open=left_eye_open,
+                        right_eye_open=right_eye_open,
                     )
                 )
             else:
@@ -237,14 +302,14 @@ class FaceExtractor:
 
 
 def check_available() -> bool:
-    """Check if mediapipe face mesh is available.
+    """Check if mediapipe face landmarker is available.
 
     Returns:
-        True if mediapipe can be imported and has face_mesh.
+        True if mediapipe tasks API can be imported.
     """
     try:
-        import mediapipe as mp
+        from mediapipe.tasks.python import vision
 
-        return hasattr(mp, "solutions") and hasattr(mp.solutions, "face_mesh")
+        return hasattr(vision, "FaceLandmarker")
     except ImportError:
         return False
