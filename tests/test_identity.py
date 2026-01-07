@@ -12,6 +12,7 @@ from mirage.core.identity import (
     compute_provider_idempotency_key,
     compute_run_id,
     compute_spec_hash,
+    seed_from_variant_key,
 )
 
 
@@ -301,3 +302,42 @@ class TestEndToEndIdentity:
         assert spec_hash == spec_hash_2
         assert run_id == run_id_2
         assert provider_key == provider_key_2
+
+
+class TestSeedFromVariantKey:
+    """Tests for seed_from_variant_key extraction."""
+
+    def test_extracts_seed_from_seed_format(self):
+        """Should extract integer seed from 'seed=X' format."""
+        assert seed_from_variant_key("seed=42") == 42
+        assert seed_from_variant_key("seed=123") == 123
+        assert seed_from_variant_key("seed=0") == 0
+        assert seed_from_variant_key("seed=999999") == 999999
+
+    def test_handles_negative_seed(self):
+        """Should handle negative seed values."""
+        assert seed_from_variant_key("seed=-1") == -1
+        assert seed_from_variant_key("seed=-42") == -42
+
+    def test_falls_back_to_hash_for_non_seed_format(self):
+        """Should use SHA256 derivation for non-seed=X format."""
+        # These should return consistent hash-derived values
+        seed1 = seed_from_variant_key("custom_variant")
+        seed2 = seed_from_variant_key("custom_variant")
+        assert seed1 == seed2
+        assert isinstance(seed1, int)
+
+    def test_different_variants_different_derived_seeds(self):
+        """Different variant keys should produce different derived seeds."""
+        seed1 = seed_from_variant_key("variant_a")
+        seed2 = seed_from_variant_key("variant_b")
+        assert seed1 != seed2
+
+    def test_invalid_seed_value_falls_back_to_hash(self):
+        """Invalid seed value after 'seed=' should fall back to hash."""
+        # 'seed=abc' can't be parsed as int, should use hash
+        seed1 = seed_from_variant_key("seed=abc")
+        seed2 = seed_from_variant_key("seed=abc")
+        assert seed1 == seed2
+        # Should be hash-derived, not 0 or error
+        assert seed1 != 0

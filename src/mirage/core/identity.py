@@ -130,17 +130,33 @@ def sha256_file(path: Path, chunk_size: int = 65536) -> str:
 
 
 def seed_from_variant_key(variant_key: str) -> int:
-    """Compute deterministic seed from variant_key.
+    """Extract or compute deterministic seed from variant_key.
 
-    Uses SHA256 to ensure determinism across Python processes
-    (unlike built-in hash() which is non-deterministic).
+    If variant_key is in "seed=X" format, extracts X directly.
+    Otherwise, uses SHA256 to derive a deterministic seed.
 
     Args:
         variant_key: Variant key string (e.g., "seed=42").
 
     Returns:
-        32-bit unsigned integer seed.
+        Integer seed value.
+
+    Examples:
+        >>> seed_from_variant_key("seed=42")
+        42
+        >>> seed_from_variant_key("seed=123")
+        123
+        >>> seed_from_variant_key("custom_variant")  # SHA256-derived
+        2881649299
     """
+    # Try to parse "seed=X" format
+    if variant_key.startswith("seed="):
+        try:
+            return int(variant_key[5:])
+        except ValueError:
+            pass  # Fall through to SHA256 derivation
+
+    # Fall back to SHA256-based derivation for arbitrary variant keys
     return int.from_bytes(
         hashlib.sha256(variant_key.encode("utf-8")).digest()[:4],
         byteorder="big",
