@@ -32,9 +32,12 @@ RIGHT_EYE_INDICES = [362, 385, 387, 263, 373, 380]
 LEFT_EYE_CENTER = 33
 RIGHT_EYE_CENTER = 263
 
-# Thresholds
-EAR_THRESHOLD = 0.2  # Below this = blink
-BLINK_CONSEC_FRAMES = 2  # Minimum frames for a blink
+# Thresholds for blink detection
+# Note: With blendshapes, eye_open ranges from 0 (closed) to 1 (open)
+# Traditional EAR threshold of 0.2 is too strict for blendshape values
+# A value of 0.5 indicates eye is half-closed, good indicator of blink
+EYE_BLINK_THRESHOLD = 0.5  # Below this = potential blink
+BLINK_CONSEC_FRAMES = 1  # Minimum frames for a blink (blendshapes are smoother)
 
 
 @dataclass
@@ -372,7 +375,7 @@ def _compute_blink_metrics(face_track: "FaceTrack") -> tuple[int | None, float |
     blink_frames = 0
 
     for eye_open in eye_values:
-        if eye_open < EAR_THRESHOLD:
+        if eye_open < EYE_BLINK_THRESHOLD:
             blink_frames += 1
         else:
             if blink_frames >= BLINK_CONSEC_FRAMES:
