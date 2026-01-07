@@ -93,6 +93,8 @@ class ProviderCallEntity:
     provider_job_id: str | None = None
     cost_usd: float | None = None
     latency_ms: int | None = None
+    raw_artifact_uri: str | None = None
+    raw_artifact_sha256: str | None = None
 
 
 # ============================================================================

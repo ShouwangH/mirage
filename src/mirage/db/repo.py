@@ -135,6 +135,8 @@ def _provider_call_to_entity(call: ProviderCall) -> ProviderCallEntity:
         provider_job_id=call.provider_job_id,
         cost_usd=call.cost_usd,
         latency_ms=call.latency_ms,
+        raw_artifact_uri=call.raw_artifact_uri,
+        raw_artifact_sha256=call.raw_artifact_sha256,
     )
 
 
@@ -219,6 +221,43 @@ def get_succeeded_run_ids_for_experiment(session: DbSession, experiment_id: str)
 def get_queued_runs(session: DbSession) -> list[RunEntity]:
     """Get all runs with status=queued."""
     runs = session.query(Run).filter(Run.status == "queued").all()
+    return [_run_to_entity(r) for r in runs]
+
+
+def claim_queued_runs(
+    session: DbSession,
+    limit: int,
+    worker_id: str,
+) -> list[RunEntity]:
+    """Atomically claim queued runs for processing.
+
+    Uses SELECT ... FOR UPDATE SKIP LOCKED to prevent double-processing.
+    Sets status='running' and started_at in single transaction.
+
+    Args:
+        session: Database session.
+        limit: Maximum number of runs to claim.
+        worker_id: Identifier for the claiming worker (for logging/debugging).
+
+    Returns:
+        List of claimed RunEntity objects (now with status='running').
+    """
+    from datetime import datetime, timezone
+
+    runs = (
+        session.query(Run)
+        .filter(Run.status == "queued")
+        .with_for_update(skip_locked=True)
+        .limit(limit)
+        .all()
+    )
+
+    now = datetime.now(timezone.utc)
+    for run in runs:
+        run.status = "running"
+        run.started_at = now
+
+    session.commit()
     return [_run_to_entity(r) for r in runs]
 
 
@@ -455,6 +494,8 @@ def create_provider_call(session: DbSession, entity: ProviderCallEntity) -> Prov
         provider_job_id=entity.provider_job_id,
         cost_usd=entity.cost_usd,
         latency_ms=entity.latency_ms,
+        raw_artifact_uri=entity.raw_artifact_uri,
+        raw_artifact_sha256=entity.raw_artifact_sha256,
     )
     session.add(call)
     return entity
@@ -468,6 +509,8 @@ def update_provider_call(
     provider_job_id: str | None = None,
     cost_usd: float | None = None,
     latency_ms: int | None = None,
+    raw_artifact_uri: str | None = None,
+    raw_artifact_sha256: str | None = None,
 ) -> None:
     """Update provider call fields."""
     call = (
@@ -482,6 +525,10 @@ def update_provider_call(
             call.cost_usd = cost_usd
         if latency_ms is not None:
             call.latency_ms = latency_ms
+        if raw_artifact_uri is not None:
+            call.raw_artifact_uri = raw_artifact_uri
+        if raw_artifact_sha256 is not None:
+            call.raw_artifact_sha256 = raw_artifact_sha256
 
 
 # ============================================================================
