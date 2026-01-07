@@ -6,11 +6,11 @@ Normalizes raw video to canonical format per ARCHITECTURE.md:
 - Duration trimmed to match audio
 """
 
-import hashlib
 import subprocess
 from pathlib import Path
 
 from mirage.adapter.media import check_available, probe_audio, probe_video
+from mirage.core.identity import sha256_file
 from mirage.models.types import CanonArtifact
 
 # Canonical format settings
@@ -103,8 +103,8 @@ def normalize_video(
     if result.returncode != 0:
         raise RuntimeError(f"Normalization failed: {result.stderr}")
 
-    # Compute sha256 of output
-    sha256 = _compute_file_sha256(output_path)
+    # Compute sha256 of output (using centralized streaming function)
+    sha256 = sha256_file(output_path)
 
     # Get actual output duration
     output_info = probe_video(output_path)
@@ -114,19 +114,3 @@ def normalize_video(
         sha256=sha256,
         duration_ms=output_info.duration_ms,
     )
-
-
-def _compute_file_sha256(file_path: Path) -> str:
-    """Compute SHA256 hash of a file.
-
-    Args:
-        file_path: Path to file.
-
-    Returns:
-        64-character hex string.
-    """
-    sha256 = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            sha256.update(chunk)
-    return sha256.hexdigest()
