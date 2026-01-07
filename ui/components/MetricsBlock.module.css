@@ -1,7 +1,7 @@
 .container {
-  background-color: #f8f9fa;
-  border-radius: 4px;
-  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .noMetrics {
@@ -11,7 +11,42 @@
   text-align: center;
 }
 
-.metrics {
+/* Summary metrics - always visible */
+.summary {
+  display: flex;
+  justify-content: space-around;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin: 0;
+}
+
+.summary .metric {
+  text-align: center;
+}
+
+.summary .metric dt {
+  font-size: 11px;
+  color: #6c757d;
+  margin-bottom: 2px;
+}
+
+.summary .metric dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #212529;
+}
+
+/* Details container with collapsible sections */
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Detail grid inside collapsible sections */
+.detailGrid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
@@ -21,7 +56,7 @@
 .metric {
   display: flex;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .metric dt {
@@ -31,6 +66,7 @@
 
 .metric dd {
   margin: 0;
-  font-weight: 600;
+  font-weight: 500;
   color: #212529;
+  font-family: 'SF Mono', Monaco, 'Consolas', monospace;
 }
