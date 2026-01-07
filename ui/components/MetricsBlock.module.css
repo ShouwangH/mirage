@@ -1,7 +1,7 @@
 .container {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 .noMetrics {
@@ -9,33 +9,6 @@
   font-style: italic;
   padding: 12px;
   text-align: center;
-}
-
-/* Summary metrics - always visible */
-.summary {
-  display: flex;
-  justify-content: space-around;
-  background-color: #f8f9fa;
-  border-radius: 4px;
-  padding: 10px 12px;
-  margin: 0;
-}
-
-.summary .metric {
-  text-align: center;
-}
-
-.summary .metric dt {
-  font-size: 11px;
-  color: #6c757d;
-  margin-bottom: 2px;
-}
-
-.summary .metric dd {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: #212529;
 }
 
 /* Details container with collapsible sections */
