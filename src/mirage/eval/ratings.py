@@ -10,10 +10,9 @@ import uuid
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy.orm import Session
-
 from mirage.db import repo
-from mirage.db.schema import HumanRating
+from mirage.db.repo import DbSession
+from mirage.models.domain import RatingEntity
 
 Choice = Literal["left", "right", "tie", "skip"]
 
@@ -40,7 +39,7 @@ class RatingResult:
 
 
 def submit_rating(
-    session: Session,
+    session: DbSession,
     rating_input: RatingInput,
 ) -> RatingResult:
     """Submit a rating for a task.
@@ -77,7 +76,7 @@ def submit_rating(
     )
 
 
-def _create_rating_entity(rating_input: RatingInput) -> HumanRating:
+def _create_rating_entity(rating_input: RatingInput) -> RatingEntity:
     """Create rating entity from input.
 
     Pure function - no database access.
@@ -86,9 +85,9 @@ def _create_rating_entity(rating_input: RatingInput) -> HumanRating:
         rating_input: Rating input data.
 
     Returns:
-        HumanRating entity ready for insertion.
+        RatingEntity ready for insertion.
     """
-    return HumanRating(
+    return RatingEntity(
         rating_id=str(uuid.uuid4()),
         task_id=rating_input.task_id,
         rater_id=rating_input.rater_id,

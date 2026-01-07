@@ -14,12 +14,12 @@ from typing import Generator
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.orm import Session
 
+from mirage.db.repo import DbSession
 from mirage.db.session import get_session
 
 
-def get_db_session() -> Generator[Session, None, None]:
+def get_db_session() -> Generator[DbSession, None, None]:
     """Dependency to get database session.
 
     Yields:

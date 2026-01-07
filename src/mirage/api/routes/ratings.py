@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from mirage.aggregation.summary import summarize_experiment
 from mirage.api.app import get_db_session
 from mirage.db import repo
+from mirage.db.repo import DbSession
 from mirage.eval.ratings import RatingInput, submit_rating
 from mirage.models.types import HumanSummary, RatingSubmission
 
@@ -29,7 +29,7 @@ class RatingCreatedResponse(BaseModel):
 @router.post("/ratings", response_model=RatingCreatedResponse, status_code=201)
 def create_rating(
     rating: RatingSubmission,
-    session: Session = Depends(get_db_session),
+    session: DbSession = Depends(get_db_session),
 ) -> RatingCreatedResponse:
     """Submit a human rating for a task.
 
@@ -73,7 +73,7 @@ def create_rating(
 @router.get("/experiments/{experiment_id}/summary", response_model=HumanSummary)
 def get_experiment_summary(
     experiment_id: str,
-    session: Session = Depends(get_db_session),
+    session: DbSession = Depends(get_db_session),
 ) -> HumanSummary:
     """Get human evaluation summary for an experiment.
 

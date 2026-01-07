@@ -16,13 +16,15 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy.orm import Session
-
 from mirage.db import repo
-from mirage.db.schema import MetricResult, ProviderCall, Run
+from mirage.db.repo import DbSession
+from mirage.models.domain import (
+    MetricResultEntity,
+    ProviderCallEntity,
+    RunEntity,
+)
 from mirage.models.types import GenerationInput
 from mirage.providers.mock import MockProvider
 
@@ -37,7 +39,7 @@ class WorkerOrchestrator:
     - Handle errors and record failures
     """
 
-    def __init__(self, session: Session, output_dir: Path):
+    def __init__(self, session: DbSession, output_dir: Path):
         """Initialize orchestrator.
 
         Args:
@@ -48,15 +50,15 @@ class WorkerOrchestrator:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def get_queued_runs(self) -> list[Run]:
+    def get_queued_runs(self) -> list[RunEntity]:
         """Get all runs with status=queued.
 
         Returns:
-            List of Run objects ready for processing.
+            List of RunEntity objects ready for processing.
         """
         return repo.get_queued_runs(self.session)
 
-    def process_run(self, run: Run) -> None:
+    def process_run(self, run: RunEntity) -> None:
         """Process a single run through the pipeline.
 
         Pipeline steps:
@@ -68,12 +70,11 @@ class WorkerOrchestrator:
         6. Store results and update status
 
         Args:
-            run: Run object to process.
+            run: RunEntity object to process.
         """
         try:
             # Step 1: Update status to running
-            run.status = "running"
-            run.started_at = datetime.now(timezone.utc)
+            repo.set_run_started(self.session, run.run_id)
             repo.commit(self.session)
 
             # Step 2: Build GenerationInput
@@ -89,21 +90,29 @@ class WorkerOrchestrator:
             self._compute_metrics(run, canon_artifact, gen_input)
 
             # Step 6: Update run with success
-            run.status = "succeeded"
-            run.output_canon_uri = canon_artifact.canon_video_path
-            run.output_sha256 = canon_artifact.sha256
-            run.ended_at = datetime.now(timezone.utc)
+            repo.update_run_status(
+                self.session,
+                run.run_id,
+                "succeeded",
+                output_canon_uri=canon_artifact.canon_video_path,
+                output_sha256=canon_artifact.sha256,
+            )
+            repo.set_run_ended(self.session, run.run_id)
             repo.commit(self.session)
 
         except Exception as e:
             # Handle failure
-            run.status = "failed"
-            run.error_code = type(e).__name__
-            run.error_detail = str(e)
-            run.ended_at = datetime.now(timezone.utc)
+            repo.update_run_status(
+                self.session,
+                run.run_id,
+                "failed",
+                error_code=type(e).__name__,
+                error_detail=str(e),
+            )
+            repo.set_run_ended(self.session, run.run_id)
             repo.commit(self.session)
 
-    def _build_generation_input(self, run: Run) -> GenerationInput:
+    def _build_generation_input(self, run: RunEntity) -> GenerationInput:
         """Build GenerationInput from database records.
 
         Args:
@@ -167,7 +176,7 @@ class WorkerOrchestrator:
             ref_image_sha256=ref_image_sha256,
         )
 
-    def _call_provider(self, run: Run, gen_input: GenerationInput):
+    def _call_provider(self, run: RunEntity, gen_input: GenerationInput):
         """Call provider to generate raw video.
 
         Args:
@@ -208,8 +217,9 @@ class WorkerOrchestrator:
             )
 
         # Create provider call record via repository
-        provider_call = ProviderCall(
-            provider_call_id=str(uuid.uuid4()),
+        provider_call_id = str(uuid.uuid4())
+        provider_call = ProviderCallEntity(
+            provider_call_id=provider_call_id,
             run_id=run.run_id,
             provider=gen_input.provider,
             provider_idempotency_key=idempotency_key,
@@ -232,20 +242,24 @@ class WorkerOrchestrator:
             raw_artifact = provider.generate_variant(gen_input)
 
             # Update provider call
-            provider_call.status = "completed"
-            provider_call.provider_job_id = raw_artifact.provider_job_id
-            provider_call.cost_usd = raw_artifact.cost_usd
-            provider_call.latency_ms = raw_artifact.latency_ms
+            repo.update_provider_call(
+                self.session,
+                provider_call_id,
+                status="completed",
+                provider_job_id=raw_artifact.provider_job_id,
+                cost_usd=raw_artifact.cost_usd,
+                latency_ms=raw_artifact.latency_ms,
+            )
             repo.commit(self.session)
 
             return raw_artifact
 
         except Exception:
-            provider_call.status = "failed"
+            repo.update_provider_call(self.session, provider_call_id, status="failed")
             repo.commit(self.session)
             raise
 
-    def _normalize_video(self, run: Run, raw_artifact, gen_input: GenerationInput):
+    def _normalize_video(self, run: RunEntity, raw_artifact, gen_input: GenerationInput):
         """Normalize raw video to canonical format.
 
         Args:
@@ -269,7 +283,7 @@ class WorkerOrchestrator:
 
         return canon_artifact
 
-    def _compute_metrics(self, run: Run, canon_artifact, gen_input: GenerationInput):
+    def _compute_metrics(self, run: RunEntity, canon_artifact, gen_input: GenerationInput):
         """Compute metrics for canonical video.
 
         Args:
@@ -288,7 +302,7 @@ class WorkerOrchestrator:
         )
 
         # Store metric result via repository
-        metric_result = MetricResult(
+        metric_result = MetricResultEntity(
             metric_result_id=str(uuid.uuid4()),
             run_id=run.run_id,
             metric_name="MetricBundleV1",

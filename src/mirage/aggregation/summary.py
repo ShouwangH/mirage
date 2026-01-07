@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy.orm import Session
-
 from mirage.db import repo
-from mirage.db.schema import HumanRating, HumanTask
+from mirage.db.repo import DbSession
+from mirage.models.domain import RatingEntity, TaskEntity
 from mirage.models.types import HumanSummary
 
 
@@ -19,12 +18,12 @@ from mirage.models.types import HumanSummary
 class TaskRatingPair:
     """Internal pairing of task and its ratings for computation."""
 
-    task: HumanTask
-    ratings: list[HumanRating]
+    task: TaskEntity
+    ratings: list[RatingEntity]
 
 
 def summarize_experiment(
-    session: Session,
+    session: DbSession,
     experiment_id: str,
 ) -> HumanSummary:
     """Compute human evaluation summary for an experiment.
@@ -57,7 +56,7 @@ def summarize_experiment(
     all_ratings = repo.get_ratings_for_tasks(session, task_ids)
 
     # Group ratings by task_id for efficient lookup
-    ratings_by_task: dict[str, list[HumanRating]] = {}
+    ratings_by_task: dict[str, list[RatingEntity]] = {}
     for rating in all_ratings:
         if rating.task_id not in ratings_by_task:
             ratings_by_task[rating.task_id] = []
@@ -65,7 +64,8 @@ def summarize_experiment(
 
     # Build task-rating pairs for pure computation
     task_rating_pairs = [
-        TaskRatingPair(task=task, ratings=ratings_by_task.get(task.task_id, [])) for task in tasks
+        TaskRatingPair(task=task, ratings=ratings_by_task.get(task.task_id, []))
+        for task in tasks
     ]
 
     # Compute win rates using pure domain logic

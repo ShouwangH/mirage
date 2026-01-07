@@ -8,11 +8,11 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 
 from mirage.api.app import get_db_session
 from mirage.db import repo
-from mirage.db.schema import Run
+from mirage.db.repo import DbSession
+from mirage.models.domain import RunEntity
 from mirage.models.types import (
     DatasetItemDetail,
     ExperimentOverview,
@@ -24,12 +24,12 @@ from mirage.models.types import (
 router = APIRouter()
 
 
-def _build_run_detail(session: Session, run: Run) -> RunDetail:
-    """Build RunDetail from Run record.
+def _build_run_detail(session: DbSession, run: RunEntity) -> RunDetail:
+    """Build RunDetail from RunEntity.
 
     Args:
         session: Database session.
-        run: Run record.
+        run: Run entity.
 
     Returns:
         RunDetail model.
@@ -68,7 +68,7 @@ def _build_run_detail(session: Session, run: Run) -> RunDetail:
 @router.get("/experiments/{experiment_id}", response_model=ExperimentOverview)
 def get_experiment(
     experiment_id: str,
-    session: Session = Depends(get_db_session),
+    session: DbSession = Depends(get_db_session),
 ) -> ExperimentOverview:
     """Get experiment overview.
 

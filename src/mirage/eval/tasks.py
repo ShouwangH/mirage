@@ -13,10 +13,9 @@ import uuid
 from dataclasses import dataclass
 from itertools import combinations
 
-from sqlalchemy.orm import Session
-
 from mirage.db import repo
-from mirage.db.schema import HumanTask
+from mirage.db.repo import DbSession
+from mirage.models.domain import TaskEntity
 
 
 @dataclass
@@ -28,7 +27,7 @@ class TaskCreationResult:
 
 
 def generate_pairwise_tasks(
-    session: Session,
+    session: DbSession,
     experiment_id: str,
 ) -> TaskCreationResult:
     """Generate pairwise comparison tasks for an experiment.
@@ -83,7 +82,7 @@ def _create_pairwise_task(
     experiment_id: str,
     left_run_id: str,
     right_run_id: str,
-) -> HumanTask:
+) -> TaskEntity:
     """Create a pairwise task with randomized presentation.
 
     Pure function - no database access.
@@ -94,7 +93,7 @@ def _create_pairwise_task(
         right_run_id: Second run to compare.
 
     Returns:
-        HumanTask ready for insertion.
+        TaskEntity ready for insertion.
     """
     # Randomly decide if we flip the presentation
     flip = secrets.randbelow(2) == 1
@@ -106,7 +105,7 @@ def _create_pairwise_task(
         presented_left = left_run_id
         presented_right = right_run_id
 
-    return HumanTask(
+    return TaskEntity(
         task_id=str(uuid.uuid4()),
         experiment_id=experiment_id,
         task_type="pairwise",
@@ -120,9 +119,9 @@ def _create_pairwise_task(
 
 
 def get_next_open_task(
-    session: Session,
+    session: DbSession,
     experiment_id: str,
-) -> HumanTask | None:
+) -> TaskEntity | None:
     """Get the next open task for an experiment.
 
     Args:
@@ -130,6 +129,6 @@ def get_next_open_task(
         experiment_id: Experiment to get task for.
 
     Returns:
-        Next open HumanTask or None if no tasks available.
+        Next open TaskEntity or None if no tasks available.
     """
     return repo.get_open_task_for_experiment(session, experiment_id)
